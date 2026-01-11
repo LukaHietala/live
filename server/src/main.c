@@ -19,6 +19,7 @@ typedef struct {
 /* Connected clients */
 typedef struct client_node {
 	uv_stream_t *client;
+	int is_host;
 	struct client_node *next;
 	struct client_node *prev;
 } client_node_t;
@@ -35,8 +36,12 @@ void add_client(uv_stream_t *client)
 	node->next = clients_head;
 	node->prev = NULL;
 
-	if (clients_head)
+	if (clients_head == NULL) {
+		node->is_host = 1;
+	} else {
+		node->is_host = 0;
 		clients_head->prev = node;
+	}
 
 	clients_head = node;
 
@@ -53,6 +58,9 @@ void remove_client(uv_stream_t *client)
 
 	if (node == NULL)
 		return;
+
+	if (node->is_host && node->prev != NULL)
+		node->prev->is_host = 1;
 
 	if (node->prev)
 		node->prev->next = node->next;
