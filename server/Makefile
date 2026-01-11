@@ -1,18 +1,24 @@
 CC = gcc
 CFLAGS += -Wall -Wextra -O2 -g
-CFLAGS += $(shell pkg-config --cflags libuv)
-LDLIBS += $(shell pkg-config --libs libuv)
-TARGET = build/server
-SRC = main.c
+CFLAGS += $(shell pkg-config --cflags libuv libcjson)
+LDLIBS += $(shell pkg-config --libs libuv libcjson)
+
+BUILD_DIR = build
+TARGET = $(BUILD_DIR)/server
+
+SRCS = $(wildcard src/*.c)
+OBJS = $(SRCS:src/%.c=$(BUILD_DIR)/%.o)
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
+$(TARGET): $(OBJS)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(OBJS) -o $(TARGET) $(LDLIBS)
 	@echo "Ready: $(TARGET)"
 
-clean:
-	rm -rf $(dir $(TARGET))
+$(BUILD_DIR)/%.o: src/%.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-.PHONY: all clean
+clean:
+	rm -rf $(BUILD_DIR)

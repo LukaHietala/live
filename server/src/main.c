@@ -1,8 +1,9 @@
-#include <cjson/cJSON.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <uv.h>
+
+#include "utils.h"
 
 #define DEFAULT_PORT	8080
 #define DEFAULT_BACKLOG 128
@@ -24,39 +25,13 @@ void free_write_req(uv_write_t *req)
 
 void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 {
-	buf->base = (char *)malloc(suggested_size);
+	buf->base = (char *)xmalloc(suggested_size);
 	buf->len = suggested_size;
 }
 
 void on_close(uv_handle_t *handle)
 {
 	free(handle);
-}
-
-cJSON *parse_json(const char *base, ssize_t nread)
-{
-	if (nread <= 0)
-		return NULL;
-
-	/* cJSON requires null terminated strings */
-	/* TODO: Make safe malloc */
-	char *data = malloc(nread + 1);
-	if (!data)
-		return NULL;
-
-	memcpy(data, base, nread);
-	data[nread] = '\0';
-
-	cJSON *json = cJSON_Parse(data);
-
-	if (json == NULL) {
-		const char *err = cJSON_GetErrorPtr();
-		if (err != NULL)
-			fprintf(stderr, "Failed to parse json: %s\n", err);
-	}
-
-	free(data);
-	return json;
 }
 
 void echo_write(uv_write_t *req, int status)
@@ -78,7 +53,7 @@ void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 
 		char *data_json_str = cJSON_PrintUnformatted(data_json);
 
-		write_req_t *req = (write_req_t *)malloc(sizeof(write_req_t));
+		write_req_t *req = (write_req_t *)xmalloc(sizeof(write_req_t));
 
 		req->buf = uv_buf_init(data_json_str, strlen(data_json_str));
 		uv_write((uv_write_t *)req, client, &req->buf, 1, echo_write);
@@ -105,7 +80,7 @@ void on_new_connection(uv_stream_t *server, int status)
 		return;
 	}
 
-	uv_tcp_t *client = (uv_tcp_t *)malloc(sizeof(uv_tcp_t));
+	uv_tcp_t *client = (uv_tcp_t *)xmalloc(sizeof(uv_tcp_t));
 	uv_tcp_init(loop, client);
 	if (uv_accept(server, (uv_stream_t *)client) == 0)
 		uv_read_start((uv_stream_t *)client, alloc_buffer, echo_read);
