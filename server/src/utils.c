@@ -5,6 +5,7 @@
 
 #include "utils.h"
 
+/* Parses JSON from string. Must be freed */
 cJSON *parse_json(const char *base, ssize_t nread)
 {
 	if (nread <= 0)
@@ -27,6 +28,28 @@ cJSON *parse_json(const char *base, ssize_t nread)
 
 	free(data);
 	return json;
+}
+
+/* Returns unformatted JSON string with newline. Must be freed */
+char *stringify_json(const cJSON *json)
+{
+	char *raw = cJSON_PrintUnformatted(json);
+	if (raw == NULL)
+		return NULL;
+
+	size_t len = strlen(raw);
+
+	char *resized = (char *)realloc(raw, len + 2);
+
+	if (resized == NULL) {
+		cJSON_free(raw);
+		return NULL;
+	}
+
+	resized[len] = '\n';
+	resized[len + 1] = '\0';
+
+	return resized;
 }
 
 void die(const char *err, ...)

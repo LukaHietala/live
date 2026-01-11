@@ -128,18 +128,7 @@ void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 			return;
 		}
 
-		char *data_json_str = cJSON_PrintUnformatted(data_json);
-
-		/* cJSON_PrintUnformatted doesn't include newline so it must be
-		 * added manually. TODO: move this to utils */
-		if (data_json_str) {
-			size_t len = strlen(data_json_str);
-			char *temp = xrealloc(data_json_str, len + 2);
-
-			data_json_str = temp;
-			data_json_str[len] = '\n';
-			data_json_str[len + 1] = '\0';
-		}
+		char *data_json_str = stringify_json(data_json);
 
 		broadcast_message(client, data_json_str);
 
