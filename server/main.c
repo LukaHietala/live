@@ -1,3 +1,4 @@
+#include <cjson/cJSON.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,32 @@ void on_close(uv_handle_t *handle)
 	free(handle);
 }
 
+cJSON *parse_json(const char *base, ssize_t nread)
+{
+	if (nread <= 0)
+		return NULL;
+
+	/* cJSON requires null terminated strings */
+	/* TODO: Make safe malloc */
+	char *data = malloc(nread + 1);
+	if (!data)
+		return NULL;
+
+	memcpy(data, base, nread);
+	data[nread] = '\0';
+
+	cJSON *json = cJSON_Parse(data);
+
+	if (json == NULL) {
+		const char *err = cJSON_GetErrorPtr();
+		if (err != NULL)
+			fprintf(stderr, "Failed to parse json: %s\n", err);
+	}
+
+	free(data);
+	return json;
+}
+
 void echo_write(uv_write_t *req, int status)
 {
 	if (status)
@@ -42,9 +69,23 @@ void echo_write(uv_write_t *req, int status)
 void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 {
 	if (nread > 0) {
+		cJSON *data_json = parse_json(buf->base, nread);
+
+		if (data_json == NULL) {
+			free(buf->base);
+			return;
+		}
+
+		char *data_json_str = cJSON_PrintUnformatted(data_json);
+
 		write_req_t *req = (write_req_t *)malloc(sizeof(write_req_t));
-		req->buf = uv_buf_init(buf->base, nread);
+
+		req->buf = uv_buf_init(data_json_str, strlen(data_json_str));
 		uv_write((uv_write_t *)req, client, &req->buf, 1, echo_write);
+
+		cJSON_Delete(data_json);
+		free(buf->base);
+
 		return;
 	}
 	if (nread < 0) {
@@ -88,5 +129,6 @@ int main()
 		fprintf(stderr, "Listen error %s\n", uv_strerror(r));
 		return 1;
 	}
+
 	return uv_run(loop, UV_RUN_DEFAULT);
 }
