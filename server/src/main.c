@@ -96,7 +96,7 @@ void on_close(uv_handle_t *handle)
 	free(handle);
 }
 
-void echo_write(uv_write_t *req, int status)
+void on_write_ready(uv_write_t *req, int status)
 {
 	if (status)
 		fprintf(stderr, "Write error %s\n", uv_strerror(status));
@@ -110,7 +110,7 @@ void send_message(uv_stream_t *dest, const char *msg)
 	char *msg_copy = strdup(msg);
 
 	req->buf = uv_buf_init(msg_copy, strlen(msg_copy));
-	uv_write((uv_write_t *)req, dest, &req->buf, 1, echo_write);
+	uv_write((uv_write_t *)req, dest, &req->buf, 1, on_write_ready);
 }
 
 /* Sends message to every client other than the sender. Message has to end with
@@ -129,7 +129,7 @@ void broadcast_message(uv_stream_t *sender, const char *msg)
 	}
 }
 
-void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
+void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 {
 	if (nread < 0) {
 		if (nread != UV_EOF)
@@ -191,7 +191,7 @@ void on_new_connection(uv_stream_t *server, int status)
 	uv_tcp_init(loop, client);
 	if (uv_accept(server, (uv_stream_t *)client) == 0) {
 		add_client((uv_stream_t *)client);
-		uv_read_start((uv_stream_t *)client, alloc_buffer, echo_read);
+		uv_read_start((uv_stream_t *)client, alloc_buffer, on_read);
 	} else {
 		uv_close((uv_handle_t *)client, on_close);
 	}
