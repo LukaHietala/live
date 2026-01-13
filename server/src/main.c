@@ -432,6 +432,7 @@ void on_new_connection(uv_stream_t *server, int status)
 	uv_tcp_t *client = (uv_tcp_t *)xmalloc(sizeof(uv_tcp_t));
 	uv_tcp_init(loop, client);
 	if (uv_accept(server, (uv_stream_t *)client) == 0) {
+		uv_tcp_keepalive(client, 1, 60);
 		add_client((uv_stream_t *)client);
 		uv_read_start((uv_stream_t *)client, alloc_buffer, on_read);
 	} else {
