@@ -151,6 +151,14 @@ void add_client(uv_stream_t *client)
 	 * functions. Libuv provides this really useful data field for arbituary
 	 * data */
 	client->data = node;
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "event", "user_joined");
+	cJSON_AddNumberToObject(root, "id", node->id);
+	cJSON_AddStringToObject(root, "name", node->name);
+	cJSON_AddBoolToObject(root, "is_host", node->is_host);
+
+	broadcast_message(client, stringify_json(root));
 }
 
 /* Removes client from tracked clients */
@@ -160,6 +168,13 @@ void remove_client(uv_stream_t *client)
 
 	if (node == NULL)
 		return;
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "event", "user_left");
+	cJSON_AddNumberToObject(root, "id", node->id);
+	cJSON_AddStringToObject(root, "name", node->name);
+
+	broadcast_message(client, stringify_json(root));
 
 	/* Cleanup pending requests that have this client to prevent dangling
 	 * timers that nuke the app */
@@ -318,6 +333,12 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 			free(sender_node->name);
 
 		sender_node->name = strdup(set_name_item->valuestring);
+
+		cJSON *root = cJSON_CreateObject();
+		cJSON_AddStringToObject(root, "event", "name_changed");
+		cJSON_AddNumberToObject(root, "id", sender_node->id);
+		cJSON_AddStringToObject(root, "new_name", sender_node->name);
+		broadcast_message(client, stringify_json(root));
 		goto cleanup;
 	}
 
