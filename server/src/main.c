@@ -41,69 +41,6 @@ typedef struct pending_request {
 int next_request_id = 0;
 pending_request_t *requests_head = NULL;
 
-/* Returns client's uv_stream by id */
-uv_stream_t *find_client_stream_by_id(int id)
-{
-	client_node_t *iter = clients_head;
-	while (iter) {
-		if (iter->id == id)
-			return iter->client;
-		iter = iter->next;
-	}
-	return NULL;
-}
-
-/* Adds client to tracked clients */
-void add_client(uv_stream_t *client)
-{
-	client_node_t *node = (client_node_t *)xmalloc(sizeof(client_node_t));
-
-	node->client = client;
-	node->id = next_client_id++;
-	node->next = clients_head;
-	node->prev = NULL;
-
-	if (clients_head == NULL) {
-		node->is_host = 1;
-	} else {
-		node->is_host = 0;
-		clients_head->prev = node;
-	}
-
-	clients_head = node;
-
-	/* Store this node's pointer in client, to later use for other
-	 * functions. Libuv provides this really useful data field for arbituary
-	 * data */
-	client->data = node;
-}
-
-/* Removes client from tracked clients */
-void remove_client(uv_stream_t *client)
-{
-	client_node_t *node = (client_node_t *)client->data;
-
-	if (node == NULL)
-		return;
-
-	if (node->is_host && node->prev != NULL)
-		node->prev->is_host = 1;
-
-	if (node->prev)
-		node->prev->next = node->next;
-	else
-		clients_head = node->next;
-
-	if (node->next)
-		node->next->prev = node->prev;
-
-	free(node);
-
-	/* Make sure that pointer to this node doesn't linger in client stream
-	 */
-	client->data = NULL;
-}
-
 /* Add request to the tracking list */
 void add_pending_request(pending_request_t *req)
 {
@@ -154,6 +91,82 @@ void complete_request(int request_id)
 		}
 		iter = iter->next;
 	}
+}
+
+/* Returns client's uv_stream by id */
+uv_stream_t *find_client_stream_by_id(int id)
+{
+	client_node_t *iter = clients_head;
+	while (iter) {
+		if (iter->id == id)
+			return iter->client;
+		iter = iter->next;
+	}
+	return NULL;
+}
+
+/* Adds client to tracked clients */
+void add_client(uv_stream_t *client)
+{
+	client_node_t *node = (client_node_t *)xmalloc(sizeof(client_node_t));
+
+	node->client = client;
+	node->id = next_client_id++;
+	node->next = clients_head;
+	node->prev = NULL;
+
+	if (clients_head == NULL) {
+		node->is_host = 1;
+	} else {
+		node->is_host = 0;
+		clients_head->prev = node;
+	}
+
+	clients_head = node;
+
+	/* Store this node's pointer in client, to later use for other
+	 * functions. Libuv provides this really useful data field for arbituary
+	 * data */
+	client->data = node;
+}
+
+/* Removes client from tracked clients */
+void remove_client(uv_stream_t *client)
+{
+	client_node_t *node = (client_node_t *)client->data;
+
+	if (node == NULL)
+		return;
+
+	/* Cleanup pending requests that have this client to prevent dangling
+	 * timers that nuke the app */
+	pending_request_t *iter = requests_head;
+	while (iter) {
+		pending_request_t *next = iter->next;
+		if (iter->client_id == node->id) {
+			unlink_pending_request(iter);
+			uv_timer_stop(iter->timer);
+			uv_close((uv_handle_t *)iter->timer, on_timer_close);
+		}
+		iter = next;
+	}
+
+	if (node->is_host && node->prev != NULL)
+		node->prev->is_host = 1;
+
+	if (node->prev)
+		node->prev->next = node->next;
+	else
+		clients_head = node->next;
+
+	if (node->next)
+		node->next->prev = node->prev;
+
+	free(node);
+
+	/* Make sure that pointer to this node doesn't linger in client stream
+	 */
+	client->data = NULL;
 }
 
 void free_write_req(uv_write_t *req)
@@ -218,7 +231,7 @@ void on_request_timeout(uv_timer_t *handle)
 		const char *error_msg =
 			"{\"event\": \"error\", \"data\": "
 			"{\"message\": \"Timeout! Host is too "
-			"incompetent to handle this request)\"}}\n";
+			"incompetent to handle this request on time\"}}\n";
 		send_message(client, error_msg);
 	}
 
