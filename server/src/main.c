@@ -158,7 +158,11 @@ void add_client(uv_stream_t *client)
 	cJSON_AddStringToObject(event_json, "name", node->name);
 	cJSON_AddBoolToObject(event_json, "is_host", node->is_host);
 
-	broadcast_message(client, stringify_json(event_json));
+	char *event_str = stringify_json(event_json);
+	broadcast_message(client, event_str);
+
+	cJSON_Delete(event_json);
+	free(event_str);
 }
 
 /* Removes client from tracked clients */
@@ -174,7 +178,11 @@ void remove_client(uv_stream_t *client)
 	cJSON_AddNumberToObject(event_json, "id", node->id);
 	cJSON_AddStringToObject(event_json, "name", node->name);
 
-	broadcast_message(client, stringify_json(event_json));
+	char *event_str = stringify_json(event_json);
+	broadcast_message(client, event_str);
+
+	cJSON_Delete(event_json);
+	free(event_str);
 
 	/* Cleanup pending requests that have this client to prevent dangling
 	 * timers that nuke the app */
@@ -348,7 +356,12 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		cJSON_AddNumberToObject(event_json, "id", sender_node->id);
 		cJSON_AddStringToObject(event_json, "new_name",
 					sender_node->name);
-		broadcast_message(client, stringify_json(event_json));
+
+		char *event_str = stringify_json(event_json);
+		broadcast_message(client, event_str);
+
+		cJSON_Delete(event_json);
+		free(event_str);
 		goto cleanup;
 	}
 
