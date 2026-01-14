@@ -257,7 +257,8 @@ void on_close(uv_handle_t *handle)
 void on_write_ready(uv_write_t *req, int status)
 {
 	if (status)
-		fprintf(stderr, "Write error %s\n", uv_strerror(status));
+		fprintf(stderr, "[error] Write error %s\n",
+			uv_strerror(status));
 	free_write_req(req);
 }
 
@@ -291,6 +292,15 @@ void on_request_timeout(uv_timer_t *handle)
 /* Sends message to spesified stream */
 void send_message(uv_stream_t *dest, const char *msg)
 {
+	client_node_t *node = (client_node_t *)dest->data;
+	if (node) {
+		printf("[info] Sending %zu bytes to client %d (%s): %s",
+		       strlen(msg), node->id, node->name, msg);
+	} else {
+		printf("[info] Sending %zu bytes to... somewhere: %s",
+		       strlen(msg), msg);
+	}
+
 	write_req_t *req = (write_req_t *)xmalloc(sizeof(write_req_t));
 	char *msg_copy = strdup(msg);
 
@@ -302,6 +312,16 @@ void send_message(uv_stream_t *dest, const char *msg)
  * newline */
 void broadcast_message(uv_stream_t *sender, const char *msg)
 {
+	client_node_t *sender_node =
+		sender ? (client_node_t *)sender->data : NULL;
+
+	if (sender_node) {
+		printf("[info] Broadcasting %zu bytes from client %d (%s): %s",
+		       strlen(msg), sender_node->id, sender_node->name, msg);
+	} else {
+		printf("[info] Broadcasting %zu bytes to everyone: %s",
+		       strlen(msg), msg);
+	}
 	client_node_t *iter = clients_head;
 
 	while (iter) {
@@ -320,15 +340,19 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 {
 	if (nread < 0) {
 		if (nread != UV_EOF)
-			fprintf(stderr, "Read error %s\n", uv_err_name(nread));
+			fprintf(stderr, "[error] Read error %s\n",
+				uv_err_name(nread));
 		uv_close((uv_handle_t *)client, on_close);
 		free(buf->base);
 		return;
 	}
 
+	printf("[info] Received %ld bytes: %.*s", nread, (int)nread, buf->base);
+
 	cJSON *data_json = parse_json(buf->base, nread);
 
 	if (data_json == NULL) {
+		fprintf(stderr, "[error] Failed to parse json: %s", buf->base);
 		free(buf->base);
 		return;
 	}
@@ -447,7 +471,7 @@ cleanup:
 void on_new_connection(uv_stream_t *server, int status)
 {
 	if (status < 0) {
-		fprintf(stderr, "New connection error %s\n",
+		fprintf(stderr, "[error] New connection error %s\n",
 			uv_strerror(status));
 		return;
 	}
@@ -476,7 +500,7 @@ int main()
 	int r = uv_listen((uv_stream_t *)&server, DEFAULT_BACKLOG,
 			  on_new_connection);
 	if (r) {
-		fprintf(stderr, "Listen error %s\n", uv_strerror(r));
+		fprintf(stderr, "[error] Listen error %s\n", uv_strerror(r));
 		return 1;
 	}
 
