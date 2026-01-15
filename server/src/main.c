@@ -25,16 +25,22 @@ typedef struct {
 typedef struct circular_buffer {
 	/* Actual data array */
 	char* buffer;
-	 /* Pointer to the end of the buffer */ 
+	/* Pointer to the end of the buffer */ 
 	char* buffer_end;
 	/* How large the buffer is */
 	size_t size;
+	/* When the buffer is resized, this will be the
+	 * old size of the buffer, until it is read by
+	 * cb_get_string(), after which the two sizes
+	 * will be identical */
+	size_t old_size;
 	/* Pointer to the head of the buffer (where data is inserted) */
 	char* head;
 	/* Pointer to the tail of the buffer (where data is read) */
 	char* tail;
 	/* When a string is read that overlaps the edge,
-	 * it must temporarily be stored in some memory. */
+	 * it must temporarily be stored in some memory,
+	 * to be properly read by other functions */
 	char* tmp;
 	
 } circular_buffer;
@@ -585,16 +591,21 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		cb_push_data(&(node->buffer), buf->base, nread);
 
 		/* Process complete messages, delimeter being \n. This
-		 * "should't" cause any problems with json content becouse they
+		 * "should't" cause any problems with json content because they
 		 * "should" escape the newline */
 		char* buf_string = cb_get_string(&(node->buffer));
-		process_message(client, buf_string);
-		/* cb_get_string will replace \n with \0 as well as
-		 * possibly allocating a new temporary buffer, this
-		 * will clean up any undesired complications. */
-		cb_clean_string(&(node->buffer));
+		if (buf_string) {
+			process_message(client, buf_string);
+			/* cb_get_string will replace \n with \0 as well as
+			 * possibly allocating a new temporary buffer, this
+			 * will clean up any undesired complications. */
+			cb_clean_string(&(node->buffer));
+		}
+		/* If false the message did not conclude with
+		 * a newline which means it probably has been
+		 * split multiple packages, so we just ignore
+		 * it now. The next request we'll deal with it */
 	}
-
 	if (buf->base)
 		free(buf->base);
 }
@@ -626,6 +637,7 @@ void on_new_connection(uv_stream_t *server, int status)
 void cb_init(circular_buffer *cb, size_t size)
 {
 	cb->size = size;
+	cb->old_size = size;
 	cb->buffer = (char *)xmalloc(cb->size);
 	cb->buffer_end = cb->buffer + cb->size;
 	cb->head = cb->buffer;
@@ -684,7 +696,7 @@ char* cb_get_string(circular_buffer *cb)
 		/* Second portion from the beginning of the buffer to head */
 		const char* newline_pos = memchr(cb->buffer, '\n', cb->head - cb->buffer);
 		if (!newline_pos)
-			die("??????");
+			return NULL;
 		const size_t second_portion = newline_pos - cb->buffer;
 		cb->tmp = xmalloc(first_portion + second_portion);
 		/* Copy the string to the newly allocated memory */
@@ -700,7 +712,7 @@ char* cb_get_string(circular_buffer *cb)
 		if (ptr)
 			*ptr = '\0';
 		else
-			die("whad de fuq");
+			return NULL;
 		return cb->tail;
 	}
 }
@@ -734,7 +746,7 @@ void cb_clean_string(circular_buffer *cb)
 		if (ptr)
 			*ptr = '\n';
 		else
-			die("whad de fuq");
+			die("Unable to clean string");
 	}
 }
 
