@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -333,6 +334,9 @@ void send_message(uv_stream_t *dest, const char *msg)
  * newline */
 void broadcast_message(uv_stream_t *sender, const char *msg)
 {
+	if (msg == NULL)
+		return;
+
 	client_node_t *sender_node =
 		sender ? (client_node_t *)sender->data : NULL;
 
@@ -590,6 +594,10 @@ void on_new_connection(uv_stream_t *server, int status)
 
 int main()
 {
+	/* If client tries to write to closed socket it will send SIGPIPE and
+	 * crash the app. This handles it gracefully */
+	signal(SIGPIPE, SIG_IGN);
+
 	loop = uv_default_loop();
 
 	uv_tcp_t server;
