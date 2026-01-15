@@ -535,7 +535,9 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 			node->rb_capacity = new_capacity;
 		}
 
-		/* Copy new data to read buffer */
+		/* Copy new data to read buffer, since read buffer might have
+		 * some data from previous leftovers make sure to account for
+		 * that by adding rb_len  */
 		memcpy(node->rb + node->rb_len, buf->base, nread);
 		node->rb_len += nread;
 
@@ -546,8 +548,8 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		while ((newline_pos = memchr(node->rb, '\n', node->rb_len)) !=
 		       NULL) {
 			size_t msg_len = newline_pos - node->rb;
-			/* TODO: This replaces the newline, fix if causes
-			 * problems */
+			/* Make read buffer a valid cstring for process message,
+			 * the turn it back to valid message */
 			node->rb[msg_len] = '\0';
 
 			process_message(client, node->rb, msg_len);
