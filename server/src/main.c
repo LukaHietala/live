@@ -535,13 +535,8 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 			node->rb_capacity = new_capacity;
 		}
 
-		/* Copy new data to read buffer
-		 * Always overrides the old data in the read
-		 * buffer, since it is only used in process_msg
-		 * IF IT IS USED ELSEWHERE OR ASYNCHRONOUSLY
-		 * THERE MAYYY BE ERRORS
-		 * */
-		memcpy(node->rb, buf->base, nread);
+		/* Copy new data to read buffer */
+		memcpy(node->rb + node->rb_len, buf->base, nread);
 		node->rb_len += nread;
 
 		/* Process complete messages, delimeter being \n. This
