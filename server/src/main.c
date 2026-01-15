@@ -21,18 +21,31 @@ typedef struct {
 	uv_buf_t buf;
 } write_req_t;
 
+/* Circular overwriting string buffer to store streams */ 
+typedef struct circular_buffer {
+	/* Actual data array */
+	char* buffer;
+	 /* Pointer to the end of the buffer */ 
+	char* buffer_end;
+	/* How large the buffer is */
+	size_t size;
+	/* Pointer to the head of the buffer (where data is inserted) */
+	char* head;
+	/* Pointer to the tail of the buffer (where data is read) */
+	char* tail;
+	/* When a string is read that overlaps the edge,
+	 * it must temporarily be stored in some memory. */
+	char* tmp;
+	
+} circular_buffer;
+
 /* Connected clients */
 typedef struct client_node {
 	uv_stream_t *client;
 	int id;
 	int is_host;
 	char *name;
-
-	/* Read buffers */
-	char *rb;
-	size_t rb_len;
-	size_t rb_capacity;
-
+	circular_buffer buffer;
 	struct client_node *next;
 	struct client_node *prev;
 } client_node_t;
@@ -72,6 +85,13 @@ void on_write_ready(uv_write_t *req, int status);
 void on_request_timeout(uv_timer_t *handle);
 void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf);
 void on_new_connection(uv_stream_t *server, int status);
+
+void cb_init(circular_buffer *cb, size_t size);
+void cb_free(circular_buffer *cb);
+void cb_push_data(circular_buffer *cb, char* data, size_t data_len);
+char* cb_get_string(circular_buffer *cb);
+void cb_realloc(circular_buffer *cb, size_t new_size);
+void cb_clean_string(circular_buffer *cb);
 
 /* Add request to the tracking list */
 void add_pending_request(pending_request_t *req)
@@ -150,9 +170,7 @@ void add_client(uv_stream_t *client)
 	node->prev = NULL;
 
 	/* Read buffers, start with 1KB and go on from there */
-	node->rb_capacity = 1024;
-	node->rb = (char *)xmalloc(node->rb_capacity);
-	node->rb_len = 0;
+	cb_init(&(node->buffer), 1024);
 
 	/* If this is the first client to join make it the host */
 	if (clients_head == NULL) {
@@ -251,8 +269,8 @@ void remove_client(uv_stream_t *client)
 		broadcast_message(NULL, msg);
 	}
 
-	if (node->rb)
-		free(node->rb);
+	if (node->buffer.buffer)
+		cb_free(&(node->buffer));
 
 	if (node->name)
 		free(node->name);
@@ -387,7 +405,7 @@ void broadcast_message(uv_stream_t *sender, const char *msg)
 }
 
 /* Processes every full message ending with newline */
-void process_message(uv_stream_t *client, const char *msg_str, size_t len)
+void process_message(uv_stream_t *client, const char *msg_str)
 {
 	/* Parse json message */
 	cJSON *data_json = cJSON_Parse(msg_str);
@@ -507,11 +525,12 @@ void process_message(uv_stream_t *client, const char *msg_str, size_t len)
 	cJSON_Delete(data_json);
 }
 
+/* Main function for reading data from libuv */
 void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 {
 	client_node_t *node = (client_node_t *)client->data;
 
-	/* If client disconnects "loudly" then close it, keepalive will hadle
+	/* If client disconnects "loudly" then close it, keepalive will handle
 	 * more silent disconnects, but a heartbeat system might be added later
 	 */
 	if (nread < 0) {
@@ -530,12 +549,12 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		/* Make sure that the client' read buffer size doesn't get too
 		 * large. If client tries to hog more that 10MB memory kick it
 		 * out */
-		if (node->rb_len + nread > MAX_BUFFER_SIZE) {
+		if (nread > MAX_BUFFER_SIZE) {
 			fprintf(stderr,
 				"[error] Client %d sent too much data (%zu "
 				"bytes). Sending couple petabytes to "
 				"retaliate\n",
-				node->id, node->rb_len + nread);
+				node->id, nread);
 
 			uv_close((uv_handle_t *)client, on_close);
 
@@ -545,54 +564,35 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		}
 		/* Check the capacity and if not enough allocate more memory to
 		 * it */
-		while (node->rb_len + nread > node->rb_capacity) {
-			size_t new_capacity = node->rb_capacity * 2;
+		while (nread > node->buffer.size) {
+			size_t new_capacity = node->buffer.size * 2;
 			/* Not using xrealloc here, because usually the sizes
 			 * that this is allocating are huge and server might not
 			 * have enough space for it. So to reduce crashes just
 			 * kick it out already */
-			char *new_ptr = realloc(node->rb, new_capacity);
+			cb_realloc(&(node->buffer), new_capacity);
 
-			if (!new_ptr) {
+			if (!node->buffer.buffer) {
 				fprintf(stderr, "[error] Out of memory! "
 						"Dropping misbehaving client");
 				uv_close((uv_handle_t *)client, on_close);
 				free(buf->base);
 				return;
 			}
-
-			node->rb = new_ptr;
-			node->rb_capacity = new_capacity;
 		}
 
-		/* Copy new data to read buffer, since read buffer might have
-		 * some data from previous leftovers make sure to account for
-		 * that by adding rb_len  */
-		memcpy(node->rb + node->rb_len, buf->base, nread);
-		node->rb_len += nread;
+		/* Copy new data to read buffer */
+		cb_push_data(&(node->buffer), buf->base, nread);
 
 		/* Process complete messages, delimeter being \n. This
 		 * "should't" cause any problems with json content becouse they
 		 * "should" escape the newline */
-		char *newline_pos;
-		while ((newline_pos = memchr(node->rb, '\n', node->rb_len)) !=
-		       NULL) {
-			size_t msg_len = newline_pos - node->rb;
-			/* Make read buffer a valid cstring for process message,
-			 * the turn it back to valid message */
-			node->rb[msg_len] = '\0';
-
-			process_message(client, node->rb, msg_len);
-
-			node->rb[msg_len] = '\n';
-			/* "Sliding window", move leftover data to read buffer's
-			 * start and start's colleting data on top of it until
-			 * the next newline. TODO: Use circular buffers to make
-			 * this much faster */
-			size_t remaining = node->rb_len - (msg_len + 1);
-			memmove(node->rb, newline_pos + 1, remaining);
-			node->rb_len = remaining;
-		}
+		char* buf_string = cb_get_string(&(node->buffer));
+		process_message(client, buf_string);
+		/* cb_get_string will replace \n with \0 as well as
+		 * possibly allocating a new temporary buffer, this
+		 * will clean up any undesired complications. */
+		cb_clean_string(&(node->buffer));
 	}
 
 	if (buf->base)
@@ -619,6 +619,122 @@ void on_new_connection(uv_stream_t *server, int status)
 		uv_read_start((uv_stream_t *)client, alloc_buffer, on_read);
 	} else {
 		uv_close((uv_handle_t *)client, on_close);
+	}
+}
+
+/* Initialize a circular buffer */
+void cb_init(circular_buffer *cb, size_t size)
+{
+	cb->size = size;
+	cb->buffer = (char *)xmalloc(cb->size);
+	cb->buffer_end = cb->buffer + cb->size;
+	cb->head = cb->buffer;
+	cb->tail = cb->buffer;
+	cb->tmp = NULL;
+}
+
+/* Free the memory held by a circular buffer */
+void cb_free(circular_buffer *cb)
+{
+	free(cb->buffer);
+	cb->buffer = NULL;
+	cb->buffer_end = NULL;
+	cb->tail = NULL;
+	cb->head = NULL;
+}
+
+/* Copy data_len bytes to the head of the buffer, then move
+ * tail to the beginning and head to the end of the newly allocated
+ * portion of memory. */
+void cb_push_data(circular_buffer *cb, char* data, size_t data_len)
+{
+	/* If data loops over the end */
+	if (cb->head + data_len > cb->buffer_end) {
+		/* Copy the two portions seperately */
+		/* First portion from the head to the end of the buffer */
+		const size_t first_portion = cb->buffer_end - cb->head;
+		/* Second portion from the beginning of the buffer to the
+		 * rest of the data amount */
+		const size_t second_portion = data_len - first_portion;
+		/* Copy memory */
+		memcpy(cb->head, data, first_portion);
+		memcpy(cb->buffer, data + first_portion, second_portion);
+		/* Move pointers */
+		cb->tail = cb->head;
+		cb->head = cb->buffer + second_portion;
+	} else {
+		/* Directly copy data */
+		memcpy(cb->head, data, data_len);
+		cb->tail = cb->head;
+		cb->head += data_len;
+	}
+}
+
+/* Return a usable c-string from the tail. */
+char* cb_get_string(circular_buffer *cb)
+{
+	/* If string wraps over loop */
+	if (cb->tail > cb->head) {
+		/* We can't directly pass the tail
+		 * forward, since it wouldn't be
+		 * a valid string here */
+		
+		/* First portion from the tail to the end of the buffer */
+		const size_t first_portion = cb->buffer_end - cb->tail;
+		/* Second portion from the beginning of the buffer to head */
+		const char* newline_pos = memchr(cb->buffer, '\n', cb->head - cb->buffer);
+		if (!newline_pos)
+			die("??????");
+		const size_t second_portion = newline_pos - cb->buffer;
+		cb->tmp = xmalloc(first_portion + second_portion);
+		/* Copy the string to the newly allocated memory */
+		memcpy(cb->tmp, cb->tail, first_portion);
+		/* Second portion */
+		memcpy(cb->tmp + first_portion, cb->buffer, second_portion);
+		/* null-terminator */
+		*(cb->tmp + second_portion) = '\0';
+		return cb->tmp;
+	} else {
+		/* Convert \n to \0 */
+		char* ptr = memchr(cb->tail, '\n', cb->buffer_end - cb->tail);
+		if (ptr)
+			*ptr = '\0';
+		else
+			die("whad de fuq");
+		return cb->tail;
+	}
+}
+
+/* Reallocate the memory of the buffer */
+void cb_realloc(circular_buffer *cb, size_t new_size)
+{
+	/* No error checking since it will be check manually
+	 * when this function is called */
+	/* Remember offset */
+	const size_t head_offset = cb->head - cb->buffer;
+	const size_t tail_offset = cb->tail - cb->buffer;
+	/* Reallocated */
+	cb->buffer = realloc(cb->buffer, new_size);
+	/* Correct pointers */
+	cb->buffer_end = cb->buffer + new_size;
+	cb->size = new_size;
+	cb->head = cb->buffer + head_offset;
+	cb->tail = cb->buffer + tail_offset;
+}
+
+void cb_clean_string(circular_buffer *cb)
+{
+	/* Free temporary memory */
+	if (cb->tmp) {
+		free(cb->tmp);
+		cb->tmp = NULL;
+	} else {
+		/* Convert \0 to \n */
+		char* ptr = memchr(cb->tail, '\0', cb->buffer_end - cb->tail);
+		if (ptr)
+			*ptr = '\n';
+		else
+			die("whad de fuq");
 	}
 }
 
