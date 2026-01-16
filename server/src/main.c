@@ -388,33 +388,28 @@ void process_message(uv_stream_t *client, const char *msg_str, size_t len)
 	 * it for commands like 'set_name' */
 	client_node_t *sender_node = (client_node_t *)client->data;
 
-	/* TODO: Make handshake event */
-	if (sender_node->name == NULL &&
-	    !cJSON_HasObjectItem(data_json, "set_name")) {
-		send_message(client, "{\"event\":\"error\",\"message\":\"Set "
-				     "name first!\"}\n");
-		return;
-	}
+	cJSON *event_item =
+		cJSON_GetObjectItemCaseSensitive(data_json, "event");
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(data_json, "name");
 
-	cJSON *to_host_item =
-		cJSON_GetObjectItemCaseSensitive(data_json, "to_host");
-	cJSON *to_client_item =
-		cJSON_GetObjectItemCaseSensitive(data_json, "to_client");
-	cJSON *set_name_item =
-		cJSON_GetObjectItemCaseSensitive(data_json, "set_name");
+	/* TODO: Make dedicated event handler */
+	if (cJSON_IsString(event_item) &&
+	    strcmp(event_item->valuestring, "handshake") == 0) {
+		if (!cJSON_IsString(name_item) ||
+		    name_item->valuestring == NULL) {
+			send_message(client, "{\"event\":\"error\",\"message\":"
+					     "\"Invalid name provided\"}\n");
+			goto cleanup;
+		}
 
-	/* If message has 'set_name' field, set that client's name to it and
-	 * don't do anything else */
-	// Inside process_message...
-	if (cJSON_IsString(set_name_item) &&
-	    set_name_item->valuestring != NULL) {
 		int is_first_time = (sender_node->name == NULL);
 
 		if (!is_first_time)
 			free(sender_node->name);
-		sender_node->name = strdup(set_name_item->valuestring);
+		sender_node->name = strdup(name_item->valuestring);
 
 		if (is_first_time) {
+			/* Broadcast user joined */
 			cJSON *join_json = cJSON_CreateObject();
 			cJSON_AddStringToObject(join_json, "event",
 						"user_joined");
@@ -431,6 +426,7 @@ void process_message(uv_stream_t *client, const char *msg_str, size_t len)
 			cJSON_Delete(join_json);
 			free(join_str);
 		} else {
+			/* Broadcast name change */
 			cJSON *event_json = cJSON_CreateObject();
 			cJSON_AddStringToObject(event_json, "event",
 						"name_changed");
@@ -445,13 +441,26 @@ void process_message(uv_stream_t *client, const char *msg_str, size_t len)
 			cJSON_Delete(event_json);
 			free(event_str);
 		}
+		goto cleanup;
 	}
+
+	if (sender_node->name == NULL) {
+		/* TODO: Make errors more standard */
+		send_message(client, "{\"event\":\"error\",\"message\":\"Set "
+				     "name first!\"}\n");
+		goto cleanup;
+	}
+
+	cJSON *to_host_item =
+		cJSON_GetObjectItemCaseSensitive(data_json, "to_host");
+	cJSON *to_client_item =
+		cJSON_GetObjectItemCaseSensitive(data_json, "to_client");
 
 	/* If message has 'to_host' field set to true send the request to host
 	 * with 'from_id' that identifies sender. 'from_id' is used by the host
 	 * later to send reply to the client that made the request in the first
 	 * place. This is for request events */
-	else if (cJSON_IsBool(to_host_item) && cJSON_IsTrue(to_host_item)) {
+	if (cJSON_IsBool(to_host_item) && cJSON_IsTrue(to_host_item)) {
 		int req_id = next_request_id++;
 
 		/* Creates a pending request */
@@ -521,6 +530,7 @@ void process_message(uv_stream_t *client, const char *msg_str, size_t len)
 		free(broadcast_str);
 	}
 
+cleanup:
 	cJSON_Delete(data_json);
 }
 
