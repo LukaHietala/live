@@ -21,37 +21,13 @@ typedef struct {
 	uv_buf_t buf;
 } write_req_t;
 
-/* Circular overwriting string buffer to store streams */ 
-typedef struct circular_buffer {
-	/* Actual data array */
-	char* buffer;
-	/* Pointer to the end of the buffer */ 
-	char* buffer_end;
-	/* How large the buffer is */
-	size_t size;
-	/* When the buffer is resized, this will be the
-	 * old size of the buffer, until it is read by
-	 * cb_get_string(), after which the two sizes
-	 * will be identical */
-	size_t old_size;
-	/* Pointer to the head of the buffer (where data is inserted) */
-	char* head;
-	/* Pointer to the tail of the buffer (where data is read) */
-	char* tail;
-	/* When a string is read that overlaps the edge,
-	 * it must temporarily be stored in some memory,
-	 * to be properly read by other functions */
-	char* tmp;
-	
-} circular_buffer;
-
 /* Connected clients */
 typedef struct client_node {
 	uv_stream_t *client;
 	int id;
 	int is_host;
 	char *name;
-	circular_buffer buffer;
+	struct circular_buffer buffer;
 	struct client_node *next;
 	struct client_node *prev;
 } client_node_t;
@@ -91,13 +67,6 @@ void on_write_ready(uv_write_t *req, int status);
 void on_request_timeout(uv_timer_t *handle);
 void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf);
 void on_new_connection(uv_stream_t *server, int status);
-
-void cb_init(circular_buffer *cb, size_t size);
-void cb_free(circular_buffer *cb);
-void cb_push_data(circular_buffer *cb, char* data, size_t data_len);
-char* cb_get_string(circular_buffer *cb);
-void cb_realloc(circular_buffer *cb, size_t new_size);
-void cb_clean_string(circular_buffer *cb);
 
 /* Add request to the tracking list */
 void add_pending_request(pending_request_t *req)
@@ -630,123 +599,6 @@ void on_new_connection(uv_stream_t *server, int status)
 		uv_read_start((uv_stream_t *)client, alloc_buffer, on_read);
 	} else {
 		uv_close((uv_handle_t *)client, on_close);
-	}
-}
-
-/* Initialize a circular buffer */
-void cb_init(circular_buffer *cb, size_t size)
-{
-	cb->size = size;
-	cb->old_size = size;
-	cb->buffer = (char *)xmalloc(cb->size);
-	cb->buffer_end = cb->buffer + cb->size;
-	cb->head = cb->buffer;
-	cb->tail = cb->buffer;
-	cb->tmp = NULL;
-}
-
-/* Free the memory held by a circular buffer */
-void cb_free(circular_buffer *cb)
-{
-	free(cb->buffer);
-	cb->buffer = NULL;
-	cb->buffer_end = NULL;
-	cb->tail = NULL;
-	cb->head = NULL;
-}
-
-/* Copy data_len bytes to the head of the buffer, then move
- * tail to the beginning and head to the end of the newly allocated
- * portion of memory. */
-void cb_push_data(circular_buffer *cb, char* data, size_t data_len)
-{
-	/* If data loops over the end */
-	if (cb->head + data_len > cb->buffer_end) {
-		/* Copy the two portions seperately */
-		/* First portion from the head to the end of the buffer */
-		const size_t first_portion = cb->buffer_end - cb->head;
-		/* Second portion from the beginning of the buffer to the
-		 * rest of the data amount */
-		const size_t second_portion = data_len - first_portion;
-		/* Copy memory */
-		memcpy(cb->head, data, first_portion);
-		memcpy(cb->buffer, data + first_portion, second_portion);
-		/* Move pointers */
-		cb->tail = cb->head;
-		cb->head = cb->buffer + second_portion;
-	} else {
-		/* Directly copy data */
-		memcpy(cb->head, data, data_len);
-		cb->tail = cb->head;
-		cb->head += data_len;
-	}
-}
-
-/* Return a usable c-string from the tail. */
-char* cb_get_string(circular_buffer *cb)
-{
-	/* If string wraps over loop */
-	if (cb->tail > cb->head) {
-		/* We can't directly pass the tail
-		 * forward, since it wouldn't be
-		 * a valid string here */
-		
-		/* First portion from the tail to the end of the buffer */
-		const size_t first_portion = cb->buffer_end - cb->tail;
-		/* Second portion from the beginning of the buffer to head */
-		const char* newline_pos = memchr(cb->buffer, '\n', cb->head - cb->buffer);
-		if (!newline_pos)
-			return NULL;
-		const size_t second_portion = newline_pos - cb->buffer;
-		cb->tmp = xmalloc(first_portion + second_portion);
-		/* Copy the string to the newly allocated memory */
-		memcpy(cb->tmp, cb->tail, first_portion);
-		/* Second portion */
-		memcpy(cb->tmp + first_portion, cb->buffer, second_portion);
-		/* null-terminator */
-		*(cb->tmp + second_portion) = '\0';
-		return cb->tmp;
-	} else {
-		/* Convert \n to \0 */
-		char* ptr = memchr(cb->tail, '\n', cb->buffer_end - cb->tail);
-		if (ptr)
-			*ptr = '\0';
-		else
-			return NULL;
-		return cb->tail;
-	}
-}
-
-/* Reallocate the memory of the buffer */
-void cb_realloc(circular_buffer *cb, size_t new_size)
-{
-	/* No error checking since it will be check manually
-	 * when this function is called */
-	/* Remember offset */
-	const size_t head_offset = cb->head - cb->buffer;
-	const size_t tail_offset = cb->tail - cb->buffer;
-	/* Reallocated */
-	cb->buffer = realloc(cb->buffer, new_size);
-	/* Correct pointers */
-	cb->buffer_end = cb->buffer + new_size;
-	cb->size = new_size;
-	cb->head = cb->buffer + head_offset;
-	cb->tail = cb->buffer + tail_offset;
-}
-
-void cb_clean_string(circular_buffer *cb)
-{
-	/* Free temporary memory */
-	if (cb->tmp) {
-		free(cb->tmp);
-		cb->tmp = NULL;
-	} else {
-		/* Convert \0 to \n */
-		char* ptr = memchr(cb->tail, '\0', cb->buffer_end - cb->tail);
-		if (ptr)
-			*ptr = '\n';
-		else
-			die("Unable to clean string");
 	}
 }
 
