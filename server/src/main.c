@@ -9,9 +9,8 @@
 #define DEFAULT_PORT	8080
 #define DEFAULT_BACKLOG 128
 #define DEFAULT_TIMEOUT 5000 /* ms */
-#define MAX_BUFFER_SIZE \
-	(10 * 1024 *    \
-	 1024) /* 10 MB, should be enough for any text file. If not,...???*/
+/* 10 MB, should be enough for any text file. If not,...???*/
+#define MAX_BUFFER_SIZE (10 * 1024 * 1024)
 
 uv_loop_t *loop;
 struct sockaddr_in addr;
@@ -504,6 +503,9 @@ void process_message(uv_stream_t *client, const char *msg_str)
 void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 {
 	client_node_t *node = (client_node_t *)client->data;
+	fprintf(stderr, "[debug] Amount of unparsed data left: %ld\n",
+			node->buffer.amount);
+	
 
 	/* If client disconnects "loudly" then close it, keepalive will handle
 	 * more silent disconnects, but a heartbeat system might be added later
@@ -524,12 +526,12 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		/* Make sure that the client' read buffer size doesn't get too
 		 * large. If client tries to hog more that 10MB memory kick it
 		 * out */
-		if (nread > MAX_BUFFER_SIZE) {
+		if (node->buffer.amount + nread > MAX_BUFFER_SIZE) {
 			fprintf(stderr,
-				"[error] Client %d sent too much data (%zu "
+				"[error] Client %d sent too much data (<%zu "
 				"bytes). Sending couple petabytes to "
 				"retaliate\n",
-				node->id, nread);
+				node->id, node->buffer.amount + nread);
 
 			uv_close((uv_handle_t *)client, on_close);
 
@@ -539,7 +541,7 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		}
 		/* Check the capacity and if not enough allocate more memory to
 		 * it */
-		while (nread > node->buffer.size) {
+		while (node->buffer.amount + nread > node->buffer.size) {
 			size_t new_capacity = node->buffer.size * 2;
 			/* Not using xrealloc here, because usually the sizes
 			 * that this is allocating are huge and server might not
@@ -562,18 +564,14 @@ void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		/* Process complete messages, delimeter being \n. This
 		 * "should't" cause any problems with json content because they
 		 * "should" escape the newline */
-		char* buf_string = cb_get_string(&(node->buffer));
-		if (buf_string) {
+		char* buf_string;
+		while ((buf_string = cb_get_string(&(node->buffer)))) {
 			process_message(client, buf_string);
 			/* cb_get_string will replace \n with \0 as well as
 			 * possibly allocating a new temporary buffer, this
 			 * will clean up any undesired complications. */
 			cb_clean_string(&(node->buffer));
 		}
-		/* If false the message did not conclude with
-		 * a newline which means it probably has been
-		 * split multiple packages, so we just ignore
-		 * it now. The next request we'll deal with it */
 	}
 	if (buf->base)
 		free(buf->base);

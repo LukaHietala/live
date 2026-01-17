@@ -80,6 +80,7 @@ void *xrealloc(void *ptr, size_t size)
 void cb_init(struct circular_buffer *cb, size_t size)
 {
 	cb->size = size;
+	cb->amount = 0;
 	cb->buffer = (char *)xmalloc(cb->size);
 	cb->buffer_end = cb->buffer + cb->size;
 	cb->head = cb->buffer;
@@ -97,11 +98,11 @@ void cb_free(struct circular_buffer *cb)
 	cb->head = NULL;
 }
 
-/* Copy data_len bytes to the head of the buffer, then move
- * tail to the beginning and head to the end of the newly allocated
- * portion of memory. */
+/* Copy data_len bytes to the head of the buffer, head
+ * to the end of the newly allocated portion of memory. */
 void cb_push_data(struct circular_buffer *cb, char* data, size_t data_len)
 {
+	cb->amount += data_len;
 	/* If data loops over the end */
 	if (cb->head + data_len > cb->buffer_end) {
 		/* Copy the two portions seperately */
@@ -114,17 +115,16 @@ void cb_push_data(struct circular_buffer *cb, char* data, size_t data_len)
 		memcpy(cb->head, data, first_portion);
 		memcpy(cb->buffer, data + first_portion, second_portion);
 		/* Move pointers */
-		cb->tail = cb->head;
 		cb->head = cb->buffer + second_portion;
 	} else {
 		/* Directly copy data */
 		memcpy(cb->head, data, data_len);
-		cb->tail = cb->head;
 		cb->head += data_len;
 	}
 }
 
-/* Return a usable c-string from the tail. */
+/* Return a usable c-string from the tail, and tail to the beginning
+ * of the next possible string */
 char* cb_get_string(struct circular_buffer *cb)
 {
 	/* If string wraps over loop */
@@ -147,17 +147,29 @@ char* cb_get_string(struct circular_buffer *cb)
 		memcpy(cb->tmp + first_portion, cb->buffer, second_portion);
 		/* null-terminator */
 		*(cb->tmp + first_portion + second_portion - 1) = '\0';
-		/* I don't really know how exactly all this works out when
-		 * it comes to the off-by-one situations, but trust the process */
+		/* Move tail past to the beginning of the next string */
+		cb->tail = (char *)newline_pos + 1;
+		/* Negate counter */
+		cb->amount -= first_portion + second_portion;
 		return cb->tmp;
 	} else {
 		/* Convert \n to \0 */
-		char* ptr = memchr(cb->tail, '\n', cb->buffer_end - cb->tail);
-		if (ptr)
+		char* ptr = memchr(cb->tail, '\n', cb->head - cb->tail);
+		if (ptr) {
 			*ptr = '\0';
-		else
-			return NULL;
-		return cb->tail;
+			/* String to return */
+			char* str = cb->tail;
+			/* Negate counter */
+			cb->amount -= ptr - str + 1;
+			/* Move tail past the end of the string so next time
+			 * cb_get_string is called, it will return a different
+			 * string, if it finds one before the header.
+			 * (before the head, because if that clause wasn't present,
+			 * it would read old strings from the buffer) */
+			cb->tail = ptr+1;
+			return str;
+		}
+		return NULL;
 	}
 }
 
@@ -186,8 +198,8 @@ void cb_clean_string(struct circular_buffer *cb)
 		cb->tmp = NULL;
 	} else {
 		/* Convert \0 to \n */
-		char* ptr = memchr(cb->tail, '\0', cb->buffer_end - cb->tail);
-		if (ptr)
+		char* ptr = cb->tail - 1;
+		if (*ptr == '\0')
 			*ptr = '\n';
 		else
 			die("Unable to clean string");

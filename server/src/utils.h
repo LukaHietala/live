@@ -18,14 +18,21 @@ struct circular_buffer {
 	char* buffer_end;
 	/* How large the buffer is */
 	size_t size;
-	/* Pointer to the head of the buffer (where data is inserted) */
+	/* Pointer to the head of the buffer (where data is inserted)
+	 * head will always point exactly where new data will start
+	 * being inserted, and after insertion will move forward */
 	char* head;
-	/* Pointer to the tail of the buffer (where data is read) */
+	/* Pointer to the tail of the buffer (where data is read)
+	 * tail will always point exactly after the last string that
+	 * was read, and it will attempt to find a new string when
+	 * cb_get_string is called */
 	char* tail;
 	/* When a string is read that overlaps the edge,
 	 * it must temporarily be stored in some memory,
 	 * to be properly read by other functions */
 	char* tmp;
+	/* The amount of unread data currently held */
+	size_t amount;
 };
 
 void cb_init(struct circular_buffer *cb, size_t size);
