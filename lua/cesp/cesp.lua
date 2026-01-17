@@ -1,24 +1,55 @@
 local uv = vim.uv or vim.loop
 
+local M = {}
+
+-- Current libuv uv_tcp_t handle
+M.handle = nil
+
+local function decode_json(str)
+	local ok, res = pcall(vim.json.decode, str)
+	return ok and res or nil
+end
+
+local function encode_json(json)
+	local ok, res = pcall(vim.json.encode, json)
+	return ok and res or nil
+end
+
+local function send_event(event_table)
+	if not M.handle or M.handle:is_closing() then
+		print("Unable to send the event")
+		return
+	end
+
+	local event_str = encode_json(event_table)
+	if event_str then
+		M.handle:write(event_str .. "\n")
+	end
+end
+
 local function start_client()
 	-- Create scratch buffer
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.cmd("vsplit | b" .. buf)
 
-	local client = uv.new_tcp()
+	M.handle = uv.new_tcp()
 	local chunks = {}
 
-	client:connect("127.0.0.1", 8080, function(err)
+	M.handle:connect("127.0.0.1", 8080, function(err)
 		if err then
 			return print(err)
 		end
 
 		-- Handshake
-		client:write('{"event": "handshake", "name": "lentava_pomeranian"}\n')
+		local handshake_event = {
+			event = "handshake",
+			name = "lentava_pomeranian",
+		}
+		send_event(handshake_event)
 
-		client:read_start(function(err, chunk)
+		M.handle:read_start(function(err, chunk)
 			if err or not chunk then
-				return client:close()
+				return M.handle:close()
 			end
 
 			table.insert(chunks, chunk)
