@@ -10,6 +10,53 @@ M.config = {
 -- Current libuv uv_tcp_t handle
 M.handle = nil
 
+-- Open remote content in buffer
+local function open_remote_file(path, content)
+	vim.schedule(function()
+		local target_name = path .. " (remote)"
+		local found_buf = nil
+
+		-- Search for currently open buffers
+		for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+			local name = vim.api.nvim_buf_get_name(buf)
+			if
+				-- Compare only the last portion to be more reliable
+				name:sub(-#target_name) == target_name
+				and vim.api.nvim_buf_is_valid(buf)
+			then
+				found_buf = buf
+				break
+			end
+		end
+
+		local buf = found_buf
+
+		--If not found, create and configure a new buffer
+		if not buf then
+			buf = vim.api.nvim_create_buf(true, true)
+			pcall(vim.api.nvim_buf_set_name, buf, target_name)
+
+			-- "nofile" to prevent standard write behaviour
+			vim.bo[buf].buftype = "nofile"
+			vim.bo[buf].swapfile = false
+			-- Don't unload when abandoned
+			vim.bo[buf].bufhidden = "hide"
+
+			-- Try to detect filetype for syntax. LSP don't work because they require more context
+			local ft = vim.filetype.match({ filename = path })
+			if ft then
+				vim.bo[buf].filetype = ft
+			end
+		end
+
+		-- Update the content
+		local lines = vim.split(content, "\n", { plain = true })
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+		vim.api.nvim_set_current_buf(buf)
+	end)
+end
+
 local function send_event(event_table)
 	if not M.handle or M.handle:is_closing() then
 		print("Unable to send the event")
@@ -42,11 +89,44 @@ local function handle_event(json_str)
 	if payload.event == "response_files" then
 		vim.schedule(function()
 			if payload.files and #payload.files > 0 then
-				browser.open_file_browser(payload.files)
+				browser.open_file_browser(payload.files, function(path)
+					send_event({
+						event = "request_file",
+						path = path,
+					})
+				end)
 			else
 				print("No files received")
 			end
 		end)
+		return
+	end
+
+	if payload.event == "request_file" then
+		-- TODO: pending, current buffer. Just io for now
+		local content = utils.read_file(payload.path)
+
+		if not content then
+			return
+		end
+
+		send_event({
+			event = "response_file",
+			path = payload.path,
+			content = content,
+			request_id = payload.request_id,
+		})
+	end
+
+	if payload.event == "response_file" then
+		local content = payload.content
+		local path = payload.path
+
+		if not content then
+			print("No content from" .. path)
+		end
+
+		open_remote_file(path, content)
 		return
 	end
 

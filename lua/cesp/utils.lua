@@ -61,4 +61,21 @@ function M.get_files(root_path)
 	return files
 end
 
+function M.read_file(path)
+	local fd = uv.fs_open(path, "r", tonumber("644", 8))
+	if not fd then
+		return nil
+	end
+
+	local stat = uv.fs_fstat(fd)
+	if not stat then
+		uv.fs_close(fd)
+		return nil
+	end
+
+	local data = uv.fs_read(fd, stat.size, 0)
+	uv.fs_close(fd)
+	return data
+end
+
 return M

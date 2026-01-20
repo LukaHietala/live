@@ -89,7 +89,7 @@ local function get_match_score(query, path)
 	return 50 + avg_pos_score + boundary_bonus, match_positions
 end
 
-function M.open_file_browser(files)
+function M.open_file_browser(files, on_select)
 	-- Buffer where selected file will be "opened"
 	local target_win = vim.api.nvim_get_current_win()
 	-- Unlisted scratch buffer for file browser
@@ -177,8 +177,7 @@ function M.open_file_browser(files)
 		if file and file ~= "" then
 			vim.api.nvim_win_close(win, true)
 			vim.api.nvim_set_current_win(target_win)
-			-- TODO: Open remote buffer
-			print(file) -- tucked away in messages
+			on_select(file)
 		end
 	end
 
