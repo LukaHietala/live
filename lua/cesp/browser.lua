@@ -89,6 +89,15 @@ local function get_match_score(query, path)
 	return 50 + avg_pos_score + boundary_bonus, match_positions
 end
 
+-- Sends request for host's filetree
+function M.list_remote_files()
+	local events = require("cesp.events")
+	events.send_event({
+		event = "request_files",
+	})
+end
+
+-- Opens custm filebrowser with remote files
 function M.open_file_browser(files, on_select)
 	-- Buffer where selected file will be "opened"
 	local target_win = vim.api.nvim_get_current_win()
@@ -96,6 +105,7 @@ function M.open_file_browser(files, on_select)
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.bo[buf].bufhidden = "wipe"
 	vim.bo[buf].buftype = "nofile"
+	vim.api.nvim_buf_set_name(buf, "Remote files")
 
 	local win = vim.api.nvim_open_win(buf, true, {
 		-- TODO: Add split and other settings to config, non-floating for simplicity
@@ -104,12 +114,16 @@ function M.open_file_browser(files, on_select)
 		style = "minimal",
 	})
 	vim.wo[win].cursorline = true
-	vim.api.nvim_set_hl(0, "SearchMatch", { fg = "#fc863f", bold = true })
 
+	-- Orange for search matches
+	vim.api.nvim_set_hl(0, "SearchMatch", { fg = "#ff9e64", bold = true })
+
+	-- Renders the browser
 	local function render()
 		if not vim.api.nvim_buf_is_valid(buf) then
 			return
 		end
+		-- Get query from first line (designated only for search)
 		local query = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
 
 		-- Filter, score, and sort. Ignore if score is zero (nothing matches)
@@ -123,6 +137,7 @@ function M.open_file_browser(files, on_select)
 			end)
 			:totable()
 
+		-- Sort based on score
 		table.sort(results, function(a, b)
 			return a.score > b.score
 		end)
@@ -133,6 +148,8 @@ function M.open_file_browser(files, on_select)
 				return item.name
 			end)
 			:totable()
+
+		-- Start listing files after 2 line due to search line being on line 1
 		vim.api.nvim_buf_set_lines(buf, 1, -1, false, lines)
 
 		-- Apply highlights using extmarks
@@ -181,6 +198,7 @@ function M.open_file_browser(files, on_select)
 		end
 	end
 
+	-- Keymaps for file browser, TODO: add more :)
 	local opts = { buffer = buf, silent = true }
 	vim.keymap.set({ "i", "n" }, "<CR>", select_file, opts)
 	vim.keymap.set({ "i", "n" }, "<Esc>", function()
@@ -188,6 +206,53 @@ function M.open_file_browser(files, on_select)
 	end, opts)
 	vim.keymap.set("i", "<C-j>", "<Down>", opts)
 	vim.keymap.set("i", "<C-k>", "<Up>", opts)
+end
+
+-- Open remote content in buffer
+function M.open_remote_file(path, content)
+	vim.schedule(function()
+		local target_name = path
+		local found_buf = nil
+
+		-- Search for currently open buffers
+		for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+			local name = vim.api.nvim_buf_get_name(buf)
+			if
+				-- Compare only the last portion to be more reliable
+				name:sub(-#target_name) == target_name
+				and vim.api.nvim_buf_is_valid(buf)
+			then
+				found_buf = buf
+				break
+			end
+		end
+
+		local buf = found_buf
+
+		--If not found, create and configure a new buffer
+		if not buf then
+			buf = vim.api.nvim_create_buf(true, true)
+			pcall(vim.api.nvim_buf_set_name, buf, target_name)
+
+			-- "nofile" to prevent standard write behaviour
+			vim.bo[buf].buftype = "nofile"
+			vim.bo[buf].swapfile = false
+			-- Don't unload when abandoned
+			vim.bo[buf].bufhidden = "hide"
+
+			-- Try to detect filetype for syntax. LSP don't work because they require more context
+			local ft = vim.filetype.match({ filename = path })
+			if ft then
+				vim.bo[buf].filetype = ft
+			end
+		end
+
+		-- Update the content
+		local lines = vim.split(content, "\n", { plain = true })
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+		vim.api.nvim_set_current_buf(buf)
+	end)
 end
 
 return M

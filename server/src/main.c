@@ -444,6 +444,28 @@ void process_message(uv_stream_t *client, const char *msg_str)
 		goto cleanup;
 	}
 
+	/* Events to broadcast */
+	if (cJSON_IsString(event_item)) {
+		const char *event_name = event_item->valuestring;
+
+		if (strcmp(event_name, "cursor_move") == 0 ||
+		    strcmp(event_name, "update_content") == 0 ||
+		    strcmp(event_name, "cursor_leave") == 0) {
+			cJSON_AddNumberToObject(data_json, "from_id",
+						sender_node->id);
+			cJSON_AddStringToObject(data_json, "name",
+						sender_node->name);
+
+			char *broadcast_str = stringify_json(data_json);
+			if (broadcast_str) {
+				broadcast_message(client, broadcast_str);
+				free(broadcast_str);
+			}
+
+			goto cleanup;
+		}
+	}
+
 	/* Per event routing, some events like request_files fill be fowarded to
 	 * host with request id, and host can respond to that with correct event
 	 * like response_files with that same request_id. The response will be
