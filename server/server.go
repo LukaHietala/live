@@ -54,6 +54,11 @@ func main() {
 	flag.Parse()
 	address := ":" + *portPtr
 
+	server := &Server{
+		Clients:         make(map[int]*Client),
+		PendingRequests: make(map[int]*PendingRequest),
+	}
+
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatal(err)
@@ -66,29 +71,34 @@ func main() {
 			log.Println("Accept error:", err)
 			continue
 		}
-		go handleConnection(conn)
+		go server.handleConnection(conn)
 	}
 }
 
-func handleConnection(conn net.Conn) {
+func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	client := &Client{
 		Conn: conn,
+		// 64 slots (24 bytes each, 24x64 is around 1.5 KB) for each client's buffer
+		// If it is full start dropping (connection is usually fatally slow or broken)
 		Send: make(chan []byte, 64),
+		// Signals writer to stop
 		Done: make(chan struct{}),
 	}
 
-	server.mu.Lock()
-	client.ID = server.NextClientID
-	server.NextClientID++
+	// Add client metadata
+	s.mu.Lock()
+	client.ID = s.NextClientID
+	s.NextClientID++
 
-	if len(server.Clients) == 0 {
+	// If no other clients, make this the host
+	if len(s.Clients) == 0 {
 		client.IsHost = true
 	}
 
-	server.Clients[client.ID] = client
-	server.mu.Unlock()
+	s.Clients[client.ID] = client
+	s.mu.Unlock()
 
 	// Writer
 	go func() {
@@ -96,6 +106,7 @@ func handleConnection(conn net.Conn) {
 
 		for {
 			select {
+			// From Send buffer write to the actual connection
 			case msg, ok := <-client.Send:
 				if !ok {
 					return
@@ -122,13 +133,13 @@ func handleConnection(conn net.Conn) {
 			}
 			break
 		}
-		processMessage(client, msg)
+		s.processMessage(client, msg)
 	}
 
-	removeClient(client)
+	s.removeClient(client)
 }
 
-func processMessage(client *Client, msg map[string]any) {
+func (s *Server) processMessage(client *Client, msg map[string]any) {
 
 	// TODO: Handle non-string (malformed) fields, now expecting everything to be string
 	event, _ := msg["event"].(string)
@@ -138,27 +149,27 @@ func processMessage(client *Client, msg map[string]any) {
 		newName, ok := msg["name"].(string)
 		// TODO: Add limits
 		if !ok || newName == "" {
-			sendJSON(client, map[string]any{"event": "error", "message": "Invalid name"})
+			s.sendJSON(client, map[string]any{"event": "error", "message": "Invalid name"})
 			return
 		}
 
-		server.mu.Lock()
+		s.mu.Lock()
 		if client.Name == "" {
 			client.Name = newName
-			server.mu.Unlock()
-			broadcast(nil, map[string]any{
+			s.mu.Unlock()
+			s.broadcast(nil, map[string]any{
 				"event": "user_joined", "id": client.ID, "name": client.Name, "is_host": client.IsHost,
 			})
 		} else {
 			// If second handshake ignore and unlock mutex to prevent deadlocks
-			server.mu.Unlock()
+			s.mu.Unlock()
 		}
 
 		return
 	}
 
 	if client.Name == "" {
-		sendJSON(client, map[string]any{"event": "error", "message": "Set name first!"})
+		s.sendJSON(client, map[string]any{"event": "error", "message": "Set name first!"})
 		return
 	}
 
@@ -166,7 +177,7 @@ func processMessage(client *Client, msg map[string]any) {
 	if event == "cursor_move" || event == "update_content" || event == "cursor_leave" {
 		msg["from_id"] = client.ID
 		msg["name"] = client.Name
-		broadcast(client, msg)
+		s.broadcast(client, msg)
 		return
 	}
 
@@ -174,26 +185,26 @@ func processMessage(client *Client, msg map[string]any) {
 		reqID := int(reqIDFloat)
 
 		var target *Client
-		server.mu.Lock()
-		if pending, exists := server.PendingRequests[reqID]; exists {
-			target = server.Clients[pending.ClientID]
+		s.mu.Lock()
+		if pending, exists := s.PendingRequests[reqID]; exists {
+			target = s.Clients[pending.ClientID]
 
 			pending.Timer.Stop()
-			delete(server.PendingRequests, reqID)
+			delete(s.PendingRequests, reqID)
 		}
-		server.mu.Unlock()
+		s.mu.Unlock()
 
 		if target != nil {
-			sendJSON(target, msg)
+			s.sendJSON(target, msg)
 		} else if reqID != 0 {
 			log.Printf("Host replied to expired/unknown request id: %d", reqID)
 		}
 		return
 	}
 
-	server.mu.Lock()
-	reqID := server.NextRequestID
-	server.NextRequestID++
+	s.mu.Lock()
+	reqID := s.NextRequestID
+	s.NextRequestID++
 
 	pending := &PendingRequest{
 		ClientID:  client.ID,
@@ -201,60 +212,66 @@ func processMessage(client *Client, msg map[string]any) {
 	}
 
 	pending.Timer = time.AfterFunc(RequestTimeout, func() {
-		handleTimeout(reqID)
+		s.handleTimeout(reqID)
 	})
-	server.PendingRequests[reqID] = pending
+	s.PendingRequests[reqID] = pending
 
 	msg["request_id"] = reqID
 	msg["from_id"] = client.ID
 
+	// TODO: Move host to Server struct
 	var host *Client
-	for _, c := range server.Clients {
+	for _, c := range s.Clients {
 		if c.IsHost {
 			host = c
 			break
 		}
 	}
-	server.mu.Unlock()
+	s.mu.Unlock()
 
 	if host != nil {
-		sendJSON(host, msg)
+		s.sendJSON(host, msg)
 	} else {
-		sendJSON(client, map[string]any{"event": "error", "message": "No host available :(((("})
+		s.sendJSON(client, map[string]any{"event": "error", "message": "No host available :(((("})
 
 		// If no host clean up the pending request
-		server.mu.Lock()
-		if p, exists := server.PendingRequests[reqID]; exists {
+		s.mu.Lock()
+		if p, exists := s.PendingRequests[reqID]; exists {
 			p.Timer.Stop()
-			delete(server.PendingRequests, reqID)
+			delete(s.PendingRequests, reqID)
 		}
-		server.mu.Unlock()
+		s.mu.Unlock()
 	}
 }
 
-func removeClient(client *Client) {
-	server.mu.Lock()
+func (s *Server) removeClient(client *Client) {
+	s.mu.Lock()
 
-	if _, ok := server.Clients[client.ID]; !ok {
-		server.mu.Unlock()
+	// Make sure exits
+	if _, ok := s.Clients[client.ID]; !ok {
+		s.mu.Unlock()
 		return
 	}
 
+	// Close the connection gracefully
 	close(client.Done)
-	delete(server.Clients, client.ID)
+	delete(s.Clients, client.ID)
 
-	for id, req := range server.PendingRequests {
+	// Clear any pending requests
+	for id, req := range s.PendingRequests {
 		if req.ClientID == client.ID {
 			req.Timer.Stop()
-			delete(server.PendingRequests, id)
+			delete(s.PendingRequests, id)
 		}
 	}
 
+	// Randomly pick new host
+	// TODO: Make not random
 	var newHostName string
 	hasNewHost := false
 
-	if client.IsHost && len(server.Clients) > 0 {
-		for _, newHost := range server.Clients {
+	if client.IsHost && len(s.Clients) > 0 {
+		for _, newHost := range s.Clients {
 			newHost.IsHost = true
 			newHostName = newHost.Name
 			hasNewHost = true
@@ -262,42 +279,43 @@ func removeClient(client *Client) {
 		}
 	}
 
+	// Store client info before unlock
 	leftID := client.ID
 	leftName := client.Name
 
-	server.mu.Unlock()
+	s.mu.Unlock()
 
-	broadcast(client, map[string]any{
+	s.broadcast(client, map[string]any{
 		"event": "user_left", "id": leftID, "name": leftName,
 	})
 
 	if hasNewHost {
-		broadcast(nil, map[string]any{
+		s.broadcast(nil, map[string]any{
 			"event": "new_host", "name": newHostName,
 		})
 	}
 }
 
-func handleTimeout(reqID int) {
-	server.mu.Lock()
-	defer server.mu.Unlock()
+func (s *Server) handleTimeout(reqID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	req, ok := server.PendingRequests[reqID]
+	req, ok := s.PendingRequests[reqID]
 	if !ok {
 		return
 	}
 
-	if client, ok := server.Clients[req.ClientID]; ok {
-		sendJSON(client, map[string]any{
+	if client, ok := s.Clients[req.ClientID]; ok {
+		s.sendJSON(client, map[string]any{
 			"event":   "error",
 			"message": "Timeout! Host is too incompetent",
 		})
 	}
 
-	delete(server.PendingRequests, reqID)
+	delete(s.PendingRequests, reqID)
 }
 
-func sendJSON(client *Client, data map[string]any) {
+func (s *Server) sendJSON(client *Client, data map[string]any) {
 	bytes, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("Error marshalling: %v", err)
@@ -313,7 +331,7 @@ func sendJSON(client *Client, data map[string]any) {
 	}
 }
 
-func broadcast(sender *Client, data map[string]any) {
+func (s *Server) broadcast(sender *Client, data map[string]any) {
 	bytes, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("Error marshalling: %v", err)
@@ -321,14 +339,15 @@ func broadcast(sender *Client, data map[string]any) {
 	}
 	bytes = append(bytes, '\n')
 
-	server.mu.Lock()
-	targets := make([]*Client, 0, len(server.Clients))
-	for _, c := range server.Clients {
+	// Minimize locking by getting targets beforehand
+	s.mu.Lock()
+	targets := make([]*Client, 0, len(s.Clients))
+	for _, c := range s.Clients {
 		if sender == nil || c.ID != sender.ID {
 			targets = append(targets, c)
 		}
 	}
-	server.mu.Unlock()
+	s.mu.Unlock()
 
 	for _, c := range targets {
 		select {
