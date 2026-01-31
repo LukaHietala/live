@@ -25,6 +25,7 @@ type Client struct {
 	IsHost bool
 	// Channel buffer for messages, makes this thread-safe and non-blocking
 	Send chan []byte
+	// Signal channel for writer (signals close)
 	Done chan struct{}
 }
 
@@ -71,22 +72,20 @@ func main() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	// Register client
 	client := &Client{
 		Conn: conn,
 		Send: make(chan []byte, 64),
 		Done: make(chan struct{}),
 	}
 
-	// Setup client
 	server.mu.Lock()
 	client.ID = server.NextClientID
 	server.NextClientID++
 
-	// First client is host
 	if len(server.Clients) == 0 {
 		client.IsHost = true
 	}
+
 	server.Clients[client.ID] = client
 	server.mu.Unlock()
 
@@ -99,10 +98,10 @@ func handleConnection(conn net.Conn) {
 			select {
 			case msg, ok := <-client.Send:
 				if !ok {
-					// Closed somewhere
 					return
 				}
 				conn.Write(msg)
+			// Signal for writer stop
 			case <-client.Done:
 				return
 			}
@@ -187,12 +186,6 @@ func processMessage(client *Client, data []byte) {
 		} else {
 			log.Printf("Host replied to expired/unknown request id: %d", reqID)
 		}
-		return
-	}
-
-	// Host broadcase
-	if client.IsHost {
-		broadcast(client, msg)
 		return
 	}
 
