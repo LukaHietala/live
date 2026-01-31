@@ -288,14 +288,25 @@ func sendJSON(client *Client, data map[string]any) {
 	select {
 	case client.Send <- bytes:
 	default:
-		// Dropping
+		// Dropping (buffer full)
 	}
 }
 
 func broadcast(sender *Client, data map[string]any) {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Error marshalling: %v", err)
+		return
+	}
+	bytes = append(bytes, '\n')
+
 	for _, c := range server.Clients {
 		if sender == nil || c.ID != sender.ID {
-			sendJSON(c, data)
+			select {
+			case c.Send <- bytes:
+			default:
+				// Dropping (buffer full)
+			}
 		}
 	}
 }
