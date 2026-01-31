@@ -15,7 +15,7 @@ const (
 	// 5 seconds to respond to request
 	RequestTimeout = 5 * time.Second
 	// 5MB hard file size limit
-	MaxBufferSize  = 5 * 1024 * 1024
+	MaxBufferSize = 5 * 1024 * 1024
 )
 
 type Client struct {
@@ -277,7 +277,11 @@ func handleTimeout(reqID int) {
 }
 
 func sendJSON(client *Client, data map[string]any) {
-	bytes, _ := json.Marshal(data)
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Error marshalling: %v", err)
+		return
+	}
 	bytes = append(bytes, '\n')
 
 	// Prevents locking if client is slow (non-blocking)
