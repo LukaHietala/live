@@ -25,6 +25,7 @@ type Client struct {
 	IsHost bool
 	// Channel buffer for messages, makes this thread-safe and non-blocking
 	Send chan []byte
+	Done chan struct{}
 }
 
 type PendingRequest struct {
@@ -74,6 +75,7 @@ func handleConnection(conn net.Conn) {
 	client := &Client{
 		Conn: conn,
 		Send: make(chan []byte, 64),
+		Done: make(chan struct{}),
 	}
 
 	// Setup client
@@ -90,11 +92,22 @@ func handleConnection(conn net.Conn) {
 
 	// Listen Send channel buf on another goroutine
 	go func() {
-		for msg := range client.Send {
-			conn.Write(msg)
+		// Close the socket if anything weird happens
+		defer conn.Close()
+
+		for {
+			select {
+			case msg, ok := <-client.Send:
+				if !ok {
+					// Closed somewhere
+					return
+				}
+				conn.Write(msg)
+			case <-client.Done:
+				return
+			}
 		}
 	}()
-
 	// TODO: Maybe reader instead of scanner?
 	scanner := bufio.NewScanner(conn)
 	buf := make([]byte, 0, 64*1024)
@@ -229,7 +242,8 @@ func removeClient(client *Client) {
 		return
 	}
 
-	close(client.Send) // Stop the "write pump"
+	// Signal write thread to stop graaacefully
+	close(client.Done)
 	delete(server.Clients, client.ID)
 
 	broadcast(client, map[string]any{
