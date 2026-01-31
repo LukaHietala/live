@@ -100,7 +100,10 @@ func handleConnection(conn net.Conn) {
 				if !ok {
 					return
 				}
-				conn.Write(msg)
+				_, err := conn.Write(msg)
+				if err != nil {
+					return
+				}
 			// Signal for writer stop
 			case <-client.Done:
 				return
