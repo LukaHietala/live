@@ -1,10 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -23,7 +24,7 @@ type Client struct {
 	ID     int
 	Name   string
 	IsHost bool
-	// Channel buffer for messages, makes this thread-safe and non-blocking
+	// Channel buffer for messages, ONLY WRITE TO THIS
 	Send chan []byte
 	// Signal channel for writer (signals close)
 	Done chan struct{}
@@ -89,9 +90,8 @@ func handleConnection(conn net.Conn) {
 	server.Clients[client.ID] = client
 	server.mu.Unlock()
 
-	// Listen Send channel buf on another goroutine
+	// Writer
 	go func() {
-		// Close the socket if anything weird happens
 		defer conn.Close()
 
 		for {
@@ -110,30 +110,25 @@ func handleConnection(conn net.Conn) {
 			}
 		}
 	}()
-	// TODO: Maybe reader instead of scanner?
-	scanner := bufio.NewScanner(conn)
-	buf := make([]byte, 0, 64*1024)
 
-	scanner.Buffer(buf, MaxBufferSize)
-
-	// Read the connection and pass full messages handlers
-	for scanner.Scan() {
-		processMessage(client, scanner.Bytes())
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Printf("Read error client %d: %v", client.ID, err)
+	// Reader
+	decoder := json.NewDecoder(conn)
+	for {
+		var msg map[string]any
+		if err := decoder.Decode(&msg); err != nil {
+			// Only log if it's not a normal disconnection
+			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+				log.Printf("Read error client %d: %v", client.ID, err)
+			}
+			break
+		}
+		processMessage(client, msg)
 	}
 
 	removeClient(client)
 }
 
-func processMessage(client *Client, data []byte) {
-	var msg map[string]any
-	if err := json.Unmarshal(data, &msg); err != nil {
-		log.Printf("JSON parse error: %v", err)
-		return
-	}
+func processMessage(client *Client, msg map[string]any) {
 
 	// TODO: Handle non-string (malformed) fields, now expecting everything to be string
 	event, _ := msg["event"].(string)
