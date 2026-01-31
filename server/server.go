@@ -134,9 +134,6 @@ func processMessage(client *Client, data []byte) {
 
 	// TODO: Handle non-string (malformed) fields, now expecting everything to be string
 	event, _ := msg["event"].(string)
-	// TODO?: Lock for minimal amount of time
-	server.mu.Lock()
-	defer server.mu.Unlock()
 
 	// Handle handshake
 	if event == "handshake" {
@@ -147,11 +144,16 @@ func processMessage(client *Client, data []byte) {
 			return
 		}
 
+		server.mu.Lock()
 		if client.Name == "" {
 			client.Name = newName
+			server.mu.Unlock()
 			broadcast(nil, map[string]any{
 				"event": "user_joined", "id": client.ID, "name": client.Name, "is_host": client.IsHost,
 			})
+		} else {
+			// If second handshake ignore and unlock mutex to prevent deadlocks
+			server.mu.Unlock()
 		}
 
 		return
@@ -170,26 +172,28 @@ func processMessage(client *Client, data []byte) {
 		return
 	}
 
-	// Handle host response (has request_id, treat as float cause paranoia)
 	if reqIDFloat, ok := msg["request_id"].(float64); ok {
 		reqID := int(reqIDFloat)
 
-		// Find pending request
+		var target *Client
+		server.mu.Lock()
 		if pending, exists := server.PendingRequests[reqID]; exists {
-			// Forward to original sender
-			if target, ok := server.Clients[pending.ClientID]; ok {
-				sendJSON(target, msg)
-			}
-			// Cleanup
+			target = server.Clients[pending.ClientID]
+
 			pending.Timer.Stop()
 			delete(server.PendingRequests, reqID)
-		} else {
+		}
+		server.mu.Unlock()
+
+		if target != nil {
+			sendJSON(target, msg)
+		} else if reqID != 0 {
 			log.Printf("Host replied to expired/unknown request id: %d", reqID)
 		}
 		return
 	}
 
-	// Handle request from regular client
+	server.mu.Lock()
 	reqID := server.NextRequestID
 	server.NextRequestID++
 
@@ -198,52 +202,49 @@ func processMessage(client *Client, data []byte) {
 		RequestID: reqID,
 	}
 
-	// Timer for timeout
 	pending.Timer = time.AfterFunc(RequestTimeout, func() {
 		handleTimeout(reqID)
 	})
 	server.PendingRequests[reqID] = pending
 
-	// Add metadata (from_id is not necessary but might be useful later)
-	// All destination info's are gotten with request_id
 	msg["request_id"] = reqID
 	msg["from_id"] = client.ID
 
-	// Find host and send request
-	hostFound := false
+	var host *Client
 	for _, c := range server.Clients {
 		if c.IsHost {
-			sendJSON(c, msg)
-			hostFound = true
+			host = c
 			break
 		}
 	}
+	server.mu.Unlock()
 
-	if !hostFound {
+	if host != nil {
+		sendJSON(host, msg)
+	} else {
 		sendJSON(client, map[string]any{"event": "error", "message": "No host available :(((("})
-		pending.Timer.Stop()
-		delete(server.PendingRequests, reqID)
+
+		// If no host clean up the pending request
+		server.mu.Lock()
+		if p, exists := server.PendingRequests[reqID]; exists {
+			p.Timer.Stop()
+			delete(server.PendingRequests, reqID)
+		}
+		server.mu.Unlock()
 	}
 }
 
 func removeClient(client *Client) {
 	server.mu.Lock()
-	defer server.mu.Unlock()
 
-	// Double check if already removed
 	if _, ok := server.Clients[client.ID]; !ok {
+		server.mu.Unlock()
 		return
 	}
 
-	// Signal write thread to stop graaacefully
 	close(client.Done)
 	delete(server.Clients, client.ID)
 
-	broadcast(client, map[string]any{
-		"event": "user_left", "id": client.ID, "name": client.Name,
-	})
-
-	// Cleanup requests from this client
 	for id, req := range server.PendingRequests {
 		if req.ClientID == client.ID {
 			req.Timer.Stop()
@@ -251,16 +252,31 @@ func removeClient(client *Client) {
 		}
 	}
 
-	// "Elect" new host
+	var newHostName string
+	hasNewHost := false
+
 	if client.IsHost && len(server.Clients) > 0 {
-		// Go map iteration is random, so this picks a random new host :katti:
 		for _, newHost := range server.Clients {
 			newHost.IsHost = true
-			broadcast(nil, map[string]any{
-				"event": "new_host", "name": newHost.Name,
-			})
+			newHostName = newHost.Name
+			hasNewHost = true
 			break
 		}
+	}
+
+	leftID := client.ID
+	leftName := client.Name
+
+	server.mu.Unlock()
+
+	broadcast(client, map[string]any{
+		"event": "user_left", "id": leftID, "name": leftName,
+	})
+
+	if hasNewHost {
+		broadcast(nil, map[string]any{
+			"event": "new_host", "name": newHostName,
+		})
 	}
 }
 
@@ -307,13 +323,20 @@ func broadcast(sender *Client, data map[string]any) {
 	}
 	bytes = append(bytes, '\n')
 
+	server.mu.Lock()
+	targets := make([]*Client, 0, len(server.Clients))
 	for _, c := range server.Clients {
 		if sender == nil || c.ID != sender.ID {
-			select {
-			case c.Send <- bytes:
-			default:
-				// Dropping (buffer full)
-			}
+			targets = append(targets, c)
+		}
+	}
+	server.mu.Unlock()
+
+	for _, c := range targets {
+		select {
+		case c.Send <- bytes:
+		default:
+			// Dropping
 		}
 	}
 }
