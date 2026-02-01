@@ -41,7 +41,7 @@ type Server struct {
 	PendingRequests map[int]*PendingRequest
 	NextClientID    int
 	NextRequestID   int
-	mu              sync.Mutex
+	mu              sync.RWMutex
 }
 
 var server = Server{
@@ -340,14 +340,14 @@ func (s *Server) broadcast(sender *Client, data map[string]any) {
 	bytes = append(bytes, '\n')
 
 	// Minimize locking by getting targets beforehand
-	s.mu.Lock()
+	s.mu.RLock()
 	targets := make([]*Client, 0, len(s.Clients))
 	for _, c := range s.Clients {
 		if sender == nil || c.ID != sender.ID {
 			targets = append(targets, c)
 		}
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	for _, c := range targets {
 		select {
