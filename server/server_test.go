@@ -13,7 +13,7 @@ func startServer() string {
 	go func() {
 		for {
 			conn, _ := listener.Accept()
-			go handleConnection(conn)
+			go server.handleConnection(conn)
 		}
 	}()
 	return listener.Addr().String()

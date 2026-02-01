@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -124,19 +125,32 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}()
 
 	// Reader
-	decoder := json.NewDecoder(conn)
-	for {
+	scanner := bufio.NewScanner(conn)
+	// Start with 64KB
+	buf := make([]byte, 0, 64*1024)
+	// Cap to max size
+	scanner.Buffer(buf, MaxBufferSize)
+
+	for scanner.Scan() {
 		var msg map[string]any
-		if err := decoder.Decode(&msg); err != nil {
-			// Only log if it's not a normal disconnection
-			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-				log.Printf("Read error client %d: %v", client.ID, err)
-			}
-			break
+
+		err := json.Unmarshal(scanner.Bytes(), &msg)
+		if err != nil {
+			log.Printf("JSON unmarshal error client %d: %v", client.ID, err)
+			continue
 		}
+
 		s.processMessage(client, msg)
 	}
 
+	err := scanner.Err()
+	if err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			log.Printf("Client %d sent too big message", client.ID)
+		} else if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+			log.Printf("Read error client %d: %v", client.ID, err)
+		}
+	}
 	s.removeClient(client)
 }
 
@@ -187,7 +201,8 @@ func (s *Server) processMessage(client *Client, msg map[string]any) {
 
 		var target *Client
 		s.mu.Lock()
-		if pending, exists := s.PendingRequests[reqID]; exists {
+		pending, exists := s.PendingRequests[reqID]
+		if exists {
 			target = s.Clients[pending.ClientID]
 
 			pending.Timer.Stop()
@@ -237,7 +252,8 @@ func (s *Server) processMessage(client *Client, msg map[string]any) {
 
 		// If no host clean up the pending request
 		s.mu.Lock()
-		if p, exists := s.PendingRequests[reqID]; exists {
+		p, exists := s.PendingRequests[reqID]
+		if exists {
 			p.Timer.Stop()
 			delete(s.PendingRequests, reqID)
 		}
