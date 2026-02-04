@@ -216,13 +216,13 @@ func (s *Server) createNewRequest(client *Client, msg map[string]any) {
 }
 
 func (s *Server) getHost() *Client {
-    if s.Host == nil {
-        return nil
-    }
-    if _, ok := s.Clients[s.Host.ID]; ok {
-        return s.Host
-    }
-    return nil
+	if s.Host == nil {
+		return nil
+	}
+	if _, ok := s.Clients[s.Host.ID]; ok {
+		return s.Host
+	}
+	return nil
 }
 
 func (s *Server) removeClient(client *Client) {
