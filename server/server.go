@@ -182,6 +182,7 @@ func (s *Server) handleHandshake(client *Client, msg map[string]any) {
 func (s *Server) resolvePendingRequest(reqID int, msg map[string]any) {
 	if pending, exists := s.PendingRequests[reqID]; exists {
 		if target, ok := s.Clients[pending.ClientID]; ok {
+			delete(msg, "request_id")
 			s.sendJSON(target, msg)
 		}
 		pending.Timer.Stop()
