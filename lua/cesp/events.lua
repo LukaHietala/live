@@ -63,8 +63,9 @@ function M.handle_event(json_str)
 
 	-- Received request for spesific file contents
 	if payload.event == "request_file" then
-		-- TODO: pending, current buffer. Just io for now
-		local content = utils.read_file(payload.path)
+		-- Get content from open buffer, if no open buffer then pending, and if no
+		-- pending then disk
+		local content = utils.get_file_content(payload.path)
 
 		-- Don't send an empty file
 		if not content then
@@ -100,6 +101,30 @@ function M.handle_event(json_str)
 					changes = c,
 				})
 			end)
+		end)
+		return
+	end
+
+	if payload.event == "update_content" then
+		local path = payload.path
+		local changes = payload.changes
+
+		if not path or not changes then
+			return
+		end
+
+		vim.schedule(function()
+			-- Check if buffer exists and is currently loaded
+			local bufnr = vim.fn.bufnr(path)
+
+			if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+				-- Apply immediately if "looking at it"
+				buffer.apply_change(bufnr, changes)
+			else
+				-- Otherwise queue it for when we open the file
+				-- TODO: Make diffing of pending changes
+				buffer.add_pending(path, changes)
+			end
 		end)
 		return
 	end

@@ -102,4 +102,52 @@ function M.get_rel_path(bufnr)
 	return vim.fn.fnamemodify(full_path, ":.")
 end
 
+-- Get actual current buffer content (open buffer/disk + pending)
+function M.get_file_content(path)
+	local buffer_util = require("cesp.buffer")
+	local lines = {}
+
+	-- Try to get content from buffer
+	local bufnr = vim.fn.bufnr(vim.fn.fnameescape(path))
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		-- Buffer is the most trustworthy source
+		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	else
+		-- If buffer is not open fallback to disk
+		local content = M.read_file(path)
+		if content then
+			lines = vim.split(content, "\n", { plain = true })
+		else
+			lines = {}
+		end
+	end
+
+	-- Apply pending changes if they exits
+	local pending = buffer_util.pending[path]
+	if pending and #pending > 0 then
+		for _, change in ipairs(pending) do
+			local new_lines = {}
+
+			-- Keep lines before the change
+			for i = 1, change.first do
+				table.insert(new_lines, lines[i] or "")
+			end
+
+			-- Add the new/changed lines
+			for _, line in ipairs(change.lines) do
+				table.insert(new_lines, line)
+			end
+
+			-- Keep lines after the change (skipping the old_last)
+			for i = change.old_last + 1, #lines do
+				table.insert(new_lines, lines[i])
+			end
+
+			lines = new_lines
+		end
+	end
+
+	return table.concat(lines, "\n")
+end
+
 return M
