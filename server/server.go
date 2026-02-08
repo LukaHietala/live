@@ -198,6 +198,7 @@ func (s *Server) createNewRequest(client *Client, msg map[string]any) {
 		ClientID:  client.ID,
 		RequestID: reqID,
 	}
+
 	pending.Timer = time.AfterFunc(RequestTimeout, func() {
 		s.actions <- func() {
 			s.handleTimeout(reqID)
@@ -208,23 +209,14 @@ func (s *Server) createNewRequest(client *Client, msg map[string]any) {
 	msg["request_id"] = reqID
 	msg["from_id"] = client.ID
 
-	if host := s.getHost(); host != nil {
-		s.sendJSON(host, msg)
+	if s.Host != nil {
+		s.sendJSON(s.Host, msg)
 	} else {
+		// Fallback if no one is in the room to be a host
 		s.sendJSON(client, map[string]any{"event": "error", "message": "No host available"})
 		pending.Timer.Stop()
 		delete(s.PendingRequests, reqID)
 	}
-}
-
-func (s *Server) getHost() *Client {
-	if s.Host == nil {
-		return nil
-	}
-	if _, ok := s.Clients[s.Host.ID]; ok {
-		return s.Host
-	}
-	return nil
 }
 
 func (s *Server) removeClient(client *Client) {
@@ -242,18 +234,22 @@ func (s *Server) removeClient(client *Client) {
 		}
 	}
 
-	if client.IsHost && len(s.Clients) > 0 {
-		s.Host = nil
-		for _, c := range s.Clients {
-			c.IsHost = true
-			s.Host = c
+	if client.IsHost {
+		s.Host = nil // Clear current host
+		if len(s.Clients) > 0 {
+			// Pick the next available client
+			for _, c := range s.Clients {
+				c.IsHost = true
+				s.Host = c
 
-			s.broadcast(-1, map[string]any{
-				"event":   "new_host",
-				"host_id": c.ID,
-				"name":    c.Name,
-			})
-			break
+				s.broadcast(-1, map[string]any{
+					"event":   "new_host",
+					"host_id": c.ID,
+					"name":    c.Name,
+				})
+				log.Printf("New host assigned: %s (ID: %d)", c.Name, c.ID)
+				break
+			}
 		}
 	}
 
