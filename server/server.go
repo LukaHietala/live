@@ -273,8 +273,14 @@ func (s *Server) handleTimeout(reqID int) {
 }
 
 func (s *Server) sendJSON(client *Client, data map[string]any) {
-	bytes, _ := json.Marshal(data)
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Error marshaling: %v", err)
+		return
+	}
 	bytes = append(bytes, '\n')
+	log.Printf("SEND: %q TO %s\n", bytes, client.Name)
+
 	select {
 	case client.Send <- bytes:
 	case <-time.After(5 * time.Second):
@@ -283,8 +289,13 @@ func (s *Server) sendJSON(client *Client, data map[string]any) {
 }
 
 func (s *Server) broadcast(senderID int, data map[string]any) {
-	bytes, _ := json.Marshal(data)
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Error marshaling: %v", err)
+		return
+	}
 	bytes = append(bytes, '\n')
+	log.Printf("BROADCASTING: %q\n", bytes)
 
 	for _, c := range s.Clients {
 		if c.ID != senderID {
