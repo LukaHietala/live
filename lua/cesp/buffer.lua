@@ -1,5 +1,3 @@
-local utils = require("cesp.utils")
-
 local M = {}
 
 -- List of buffer that have nvim_buf listener
@@ -8,6 +6,8 @@ M.attached = {}
 M.is_applying = false
 -- List of pending changes from other clients on non-open buffers
 M.pending = {}
+
+local utils = require("cesp.utils")
 
 -- Applies a single change object to a buffer
 function M.apply_change(buf, change)
@@ -46,11 +46,11 @@ function M.list_pending_paths(on_select)
 		return
 	end
 
-	paths = {}
-
+	local paths = {}
 	for path, _ in pairs(M.pending) do
 		table.insert(paths, path)
 	end
+	table.sort(paths)
 
 	vim.ui.select(paths, {
 		prompt = "Files with pending changes:",
@@ -62,25 +62,20 @@ function M.list_pending_paths(on_select)
 	end)
 end
 
--- Opens buffer for comparing pending to disk in diff
 function M.open_pending_diff(path)
-	local buf = vim.api.nvim_create_buf(true, true)
-	pcall(vim.api.nvim_buf_set_name, buf, path .. " [pending]")
-	local disk_content = utils.read_file(path)
-	-- This does more than just getting pending content
-	-- but ensures that latest version is obtained
-	local pending_content = utils.get_file_content(path)
+	local disk_content =
+		utils.read_file(vim.fs.joinpath(utils.get_project_root(), path))
+	local pending_content = utils.get_file_content(path, M.pending[path])
 
-	-- Create diff
-	local diff_text = vim.diff(disk_content, pending_content, {
+	local buf = vim.api.nvim_create_buf(true, true)
+	vim.api.nvim_buf_set_name(buf, path .. " [pending]")
+
+	local diff_text = vim.diff(disk_content or "", pending_content, {
 		result_type = "unified",
 		ctxlen = 3,
 	})
 
-	-- Add diff to buffer
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(diff_text, "\n"))
-
-	-- Set buf filetype to "diff" to get syntax highlight
 	vim.bo[buf].filetype = "diff"
 	vim.api.nvim_set_current_buf(buf)
 end

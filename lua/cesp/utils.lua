@@ -152,57 +152,48 @@ function M.find_buffer_by_rel_path(rel_path)
 	return nil
 end
 
--- Get actual current buffer content
-function M.get_file_content(path)
-	local buffer_util = require("cesp.buffer")
-	local pending = buffer_util.pending[path]
+function M.get_file_content(path, pending_changes)
+	local root = M.get_project_root()
+	local abs_path = vim.fs.normalize(vim.fs.joinpath(root, path))
 
-	-- If no pending changes return content directly
-	if not pending or #pending == 0 then
-		-- Try open buffer first
-		local bufnr = vim.fn.bufnr(vim.fn.fnameescape(path))
-		if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-			local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-			return table.concat(lines, "\n")
-		else
-			-- Disk read if no open buffer
-			return M.read_file(path)
+	local lines = {}
+	local bufnr = M.find_buffer_by_rel_path(path)
+
+	-- Get base content
+	if bufnr and vim.api.nvim_buf_is_loaded(bufnr) then
+		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	else
+		local content = M.read_file(abs_path)
+		if content then
+			lines = vim.split(content, "\n", { trimempty = false })
 		end
 	end
 
-	-- If there are  pending changes to merge
-	local lines = {}
-	local bufnr = vim.fn.bufnr(vim.fn.fnameescape(path))
-
-	-- Get base buffer to merge pending changes to
-	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	else
-		local content = M.read_file(path)
-		if content then
-			lines = vim.split(content, "\n", { plain = true })
-		end
+	--If no pending changes provided, return base content
+	if not pending_changes or #pending_changes == 0 then
+		return table.concat(lines, "\n")
 	end
 
 	-- Apply pending changes
-	for _, change in ipairs(pending) do
-		local new_lines = {}
+	local result = vim.deepcopy(lines)
+	for _, change in ipairs(pending_changes) do
+		local new_result = {}
 		-- Keep lines before the change
 		for i = 1, change.first do
-			table.insert(new_lines, lines[i] or "")
+			table.insert(new_result, result[i] or "")
 		end
 		-- Add the new/changed lines
-		for _, line in ipairs(change.lines) do
-			table.insert(new_lines, line)
+		for _, l in ipairs(change.lines) do
+			table.insert(new_result, l)
 		end
 		-- Keep lines after the change (skipping the old_last)
-		for i = change.old_last + 1, #lines do
-			table.insert(new_lines, lines[i])
+		for i = change.old_last + 1, #result do
+			table.insert(new_result, result[i])
 		end
-		lines = new_lines
+		result = new_result
 	end
 
-	return table.concat(lines, "\n")
+	return table.concat(result, "\n")
 end
 
 return M

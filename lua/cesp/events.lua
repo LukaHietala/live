@@ -66,7 +66,11 @@ function M.handle_event(json_str)
 	if payload.event == "request_file" then
 		-- Get content from open buffer, if no open buffer then pending, and if no
 		-- pending then disk
-		local content = utils.get_file_content(payload.path)
+		local buffer_util = require("cesp.buffer")
+		local content = utils.get_file_content(
+			payload.path,
+			buffer_util.pending[payload.path]
+		)
 
 		-- Don't send an empty file
 		if not content then
