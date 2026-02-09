@@ -18,9 +18,7 @@ function M.setup(opts)
 	end, {})
 
 	vim.api.nvim_create_user_command("CespPending", function()
-		buffer.list_pending_paths(function(path)
-			buffer.open_pending_diff(path)
-		end)
+		buffer.review_pending()
 	end, {})
 
 	vim.api.nvim_create_autocmd("VimLeavePre", {

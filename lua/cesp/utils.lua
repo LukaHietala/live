@@ -102,6 +102,14 @@ function M.read_file(path)
 	return data
 end
 
+-- Write to file
+function M.write_file(path, content)
+	local abs_path = M.get_abs_path(path)
+	local fd = assert(io.open(abs_path, "w"))
+	fd:write(content)
+	fd:close()
+end
+
 -- Get project root path, .git or cwd
 function M.get_project_root()
 	-- TODO: Move root markers to config
@@ -139,6 +147,11 @@ function M.get_rel_path(bufnr)
 	return nil
 end
 
+-- Gets absolute path from project relative path
+function M.get_abs_path(path)
+	return vim.fs.normalize(vim.fs.joinpath(M.get_project_root(), path))
+end
+
 -- Find a buffer by its relative path
 function M.find_buffer_by_rel_path(rel_path)
 	for _, buf in ipairs(vim.api.nvim_list_bufs()) do
@@ -153,8 +166,7 @@ function M.find_buffer_by_rel_path(rel_path)
 end
 
 function M.get_file_content(path, pending_changes)
-	local root = M.get_project_root()
-	local abs_path = vim.fs.normalize(vim.fs.joinpath(root, path))
+	local abs_path = M.get_abs_path(path)
 
 	local lines = {}
 	local bufnr = M.find_buffer_by_rel_path(path)

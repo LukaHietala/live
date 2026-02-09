@@ -39,45 +39,120 @@ function M.add_pending(path, change)
 	table.insert(M.pending[path], change)
 end
 
--- Opens menu of paths with pending changes
-function M.list_pending_paths(on_select)
-	if next(M.pending) == nil then
-		print("No pending changes")
-		return
+-- Opens diff between disk and pending content
+function M.open_pending_diff(path)
+	local abs_path = utils.get_abs_path(path)
+	local disk_content = utils.read_file(abs_path)
+	local pending_content = utils.get_file_content(path, M.pending[path])
+
+	local buf = vim.api.nvim_create_buf(true, true)
+	pcall(vim.api.nvim_buf_set_name, buf, path .. " [pending]")
+
+	local diff_text = vim.text.diff(disk_content or "", pending_content, {
+		result_type = "unified",
+		ctxlen = 3,
+	})
+
+	if diff_text == "" then
+		diff_text = "No changes"
 	end
 
+	vim.api.nvim_buf_set_lines(
+		buf,
+		0,
+		-1,
+		false,
+		vim.split(tostring(diff_text), "\n")
+	)
+
+	vim.bo[buf].filetype = "diff"
+	vim.bo[buf].buftype = "nofile"
+
+	vim.api.nvim_set_current_buf(buf)
+
+	return buf
+end
+
+function M.review_pending()
+	-- Get all pending change paths
 	local paths = {}
 	for path, _ in pairs(M.pending) do
 		table.insert(paths, path)
 	end
 	table.sort(paths)
 
-	vim.ui.select(paths, {
-		prompt = "Files with pending changes:",
-		kind = "file",
-	}, function(choice)
-		if choice then
-			on_select(choice)
+	if #paths == 0 then
+		print("No pending changes")
+		return
+	end
+
+	-- Start iterating through paths
+	local function process_next(index)
+		if index > #paths then
+			print("Finished reviewing pending changes")
+			return
 		end
-	end)
-end
 
-function M.open_pending_diff(path)
-	local disk_content =
-		utils.read_file(vim.fs.joinpath(utils.get_project_root(), path))
-	local pending_content = utils.get_file_content(path, M.pending[path])
+		-- Open current path diff view
+		local path = paths[index]
+		local buf = M.open_pending_diff(path)
 
-	local buf = vim.api.nvim_create_buf(true, true)
-	vim.api.nvim_buf_set_name(buf, path .. " [pending]")
+		-- Force to show diff (won't work without this)
+		vim.cmd("redraw")
 
-	local diff_text = vim.diff(disk_content or "", pending_content, {
-		result_type = "unified",
-		ctxlen = 3,
-	})
+		-- List actions on cmdline
+		print(
+			string.format(
+				"Reviewing %s (%d/%d): [a]pply, [d]iscard, [n]ext, [q]uit",
+				path,
+				index,
+				#paths
+			)
+		)
 
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(diff_text, "\n"))
-	vim.bo[buf].filetype = "diff"
-	vim.api.nvim_set_current_buf(buf)
+		-- Get keycode to base action on
+		local ok, char_code = pcall(vim.fn.getchar)
+		if not ok then
+			return
+		end
+		-- TODO: fix if misbehaves
+		---@diagnostic disable-next-line: param-type-mismatch
+		local char = vim.fn.nr2char(char_code)
+
+		vim.cmd("normal! :")
+
+		-- Delete the buffer to make room for second
+		if vim.api.nvim_buf_is_valid(buf) then
+			vim.api.nvim_buf_delete(buf, { force = true })
+		end
+
+		if char == "a" then
+			-- Apply (write to disk)
+			local final_content = utils.get_file_content(path, M.pending[path])
+			utils.write_file(path, final_content)
+			M.pending[path] = nil
+			print("Applied changes to " .. path)
+			process_next(index + 1)
+		elseif char == "d" then
+			-- Discard changes
+			-- TODO: Host and client get out of sync here, force sync
+			M.pending[path] = nil
+			print("Discarded changes for " .. path)
+			process_next(index + 1)
+		elseif char == "n" then
+			-- Skip change
+			print("Skipped " .. path)
+			process_next(index + 1)
+		elseif char == "q" then
+			-- Stop reviewing
+			return
+		else
+			print("Invalid option. Press 'a', 'd', 'n', or 'q'")
+			process_next(index)
+		end
+	end
+
+	process_next(1)
 end
 
 -- Listen for buffer line changes
