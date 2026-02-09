@@ -1,5 +1,6 @@
 local config = require("cesp.config").config
 local browser = require("cesp.browser")
+local buffer = require("cesp.buffer")
 local network = require("cesp.network")
 
 local M = {}
@@ -14,6 +15,10 @@ function M.setup(opts)
 
 	vim.api.nvim_create_user_command("CespExplore", function()
 		browser.list_remote_files()
+	end, {})
+
+	vim.api.nvim_create_user_command("CespPending", function()
+		buffer.get_pending_paths()
 	end, {})
 
 	vim.api.nvim_create_autocmd("VimLeavePre", {

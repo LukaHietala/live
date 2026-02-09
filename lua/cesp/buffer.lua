@@ -39,6 +39,29 @@ function M.add_pending(path, change)
 	table.insert(M.pending[path], change)
 end
 
+-- Opens menu of paths with pending changes
+function M.get_pending_paths()
+	if next(M.pending) == nil then
+		print("No pending changes")
+		return
+	end
+
+	paths = {}
+
+	for path, _ in pairs(M.pending) do
+		table.insert(paths, path)
+	end
+
+	vim.ui.select(paths, {
+		prompt = "Files with pending changes:",
+		kind = "file",
+	}, function(choice)
+		if choice then
+			print(choice)
+		end
+	end)
+end
+
 -- Listen for buffer line changes
 function M.attach_buf_listener(buf, on_change)
 	-- Don't attach same buffer twice
