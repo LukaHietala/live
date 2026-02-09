@@ -144,38 +144,43 @@ into a string.
 
 ;;;; Handlers
 
-(defun cesp--filter(proc string)
+(defun cesp--filter(proc msg)
   "Main function which parses Cesp input.
 This function recieves all of the date recieved
 by the tcp connection, and calls other functions,
 as appropriate."
-  (message string)
-  ;; Event handling
-  (let* ((json (json-parse-string string
-								  :object-type 'alist
-								  :array-type 'list))
-		 (event (cdr (assoc 'event json))))
-	(message (concat "Event is: " event))
-	(cond
-	 ((string= "response_files" event)
-	  ;; TODO: Check if already open, and if so, just update
-	  (cesp--open-file-manager (cdr (assoc 'files json)) )
-	  )
-	 ((string= "response_file" event)
-	  (cesp--open-remote-file
-	   (cdr (assoc 'path json))
-	   (cdr (assoc 'content json))))
-	 ((string= "update_content" event)
-	  (cesp--update-content
-	   (cdr (assoc 'path json))
-	   (cdr (assoc 'changes json))))
-	 ((string= "cursor_move" event)
-	  (cesp--render-cursor
-	   (cdr (assoc 'from_id json))
-	   (cdr (assoc 'position json))
-	   (cdr (assoc 'path json))
-	   (cdr (assoc 'name json))))
-	)))
+  (message "STRING: %s :STRING"  msg)
+  ;; Split by newlines since sometimes multiple messages
+  ;; come at once :shrug: Maybe TODO message buffer?
+  (dolist (string (split-string msg "
+" t) ) ;; Newline regex :DDDD
+	(message "MESSAGE: %s" string)
+	;; Event handling
+	(let* ((json (json-parse-string string
+									:object-type 'alist
+									:array-type 'list))
+		   (event (cdr (assoc 'event json))))
+	  (message (concat "Event is: " event))
+	  (cond
+	   ((string= "response_files" event)
+		;; TODO: Check if already open, and if so, just update
+		(cesp--open-file-manager (cdr (assoc 'files json)) )
+		)
+	   ((string= "response_file" event)
+		(cesp--open-remote-file
+		 (cdr (assoc 'path json))
+		 (cdr (assoc 'content json))))
+	   ((string= "update_content" event)
+		(cesp--update-content
+		 (cdr (assoc 'path json))
+		 (cdr (assoc 'changes json))))
+	   ((string= "cursor_move" event)
+		(cesp--render-cursor
+		 (cdr (assoc 'from_id json))
+		 (cdr (assoc 'position json))
+		 (cdr (assoc 'path json))
+		 (cdr (assoc 'name json))))
+	   ))))
 
 (defun cesp--sentinel(proc msg)
   "Sentinel function which handless statues changes in connection."
@@ -190,9 +195,7 @@ can browse files on the host's computer, and open them in
 new buffers
 
 FILES should be a list of file paths (strings)."
-  (let (
-		(file-window  (split-window-horizontally))
-		)
+  (let ((file-window  (split-window-horizontally)))
 	(set-window-buffer file-window (get-buffer "*scratch*"))
 	(save-window-excursion ;; Set major mode
 	  (select-window file-window)
@@ -203,8 +206,7 @@ FILES should be a list of file paths (strings)."
 		(setq tabulated-list-entries (cons (list
 											nil (vector "Jaakko Pekka" file)
 											)
-										   tabulated-list-entries))
-		)
+										   tabulated-list-entries)))
 	  (tabulated-list-print) ;; This doesn't seem very appropriate...
 	  ;; I'm not sure where else to do this though, since it's
 	  ;; hard to pass the data to the major mode startup
@@ -246,7 +248,6 @@ buffer."
 		  ;; Update values
 		  (move-overlay overlay pos (1+ pos) buf)))))
 
-;; TODO: Make this actually work
 (defun cesp--update-content(path changes)
   "Handler function which applies changes to a buffer.
 If the specified buffer is not currently open, then
@@ -265,12 +266,10 @@ CHANGES is a alist with the changes specified as such:
 		  (goto-char (point-min))
 		  (forward-line beg)
 		  ;; Replace lines iteratively
-		  (dotimes (index (- end beg) nil)
-			(kill-line) ;; This only needs to run once BUT CLARITY FOR NOW
-			(insert (nth index lines)))
-		  ))))
+		  (kill-line  (- end beg) )
+		  (dolist (line lines)
+			(insert (concat line "\n")))))))
 
-;(cesp--open-file-manager (list "asdf" "moi"))
 ;;; _
 (provide 'cesp)
 ;;; cesp.el ends here
