@@ -1,6 +1,7 @@
 local browser = require("cesp.browser")
 local buffer = require("cesp.buffer")
 local utils = require("cesp.utils")
+local config = require("cesp.config").config
 
 local M = {}
 
@@ -139,6 +140,26 @@ function M.handle_event(json_str)
 		vim.schedule(function()
 			cursor.handle_cursor_leave(payload)
 		end)
+		return
+	end
+
+	-- User joined event
+	if payload.event == "user_joined" then
+		if not payload.name then
+			return
+		end
+
+		print(payload.name .. " joined!")
+		return
+	end
+
+	-- User left id
+	if payload.event == "user_left" then
+		if not payload.name then
+			return
+		end
+
+		print(payload.name .. " left :(")
 		return
 	end
 
