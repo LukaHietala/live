@@ -1,6 +1,7 @@
 local config = require("cesp.config").config
 local browser = require("cesp.browser")
 local buffer = require("cesp.buffer")
+local events = require("cesp.events")
 local network = require("cesp.network")
 
 local M = {}
@@ -14,10 +15,18 @@ function M.setup(opts)
 	end, { nargs = "?" })
 
 	vim.api.nvim_create_user_command("CespExplore", function()
+		if events.state.is_host then
+			print("For clients only")
+			return
+		end
 		browser.list_remote_files()
 	end, {})
 
 	vim.api.nvim_create_user_command("CespPending", function()
+		if not events.state.is_host then
+			print("For host only")
+			return
+		end
 		buffer.review_pending()
 	end, {})
 

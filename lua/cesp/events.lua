@@ -165,7 +165,10 @@ function M.handle_event(json_str)
 				buffer.apply_change(bufnr, changes)
 			else
 				-- If the buffer isn't open, we store it in pending
-				buffer.add_pending(path, changes)
+				-- Only create pending chages for host
+				if M.state.is_host then
+					buffer.add_pending(path, changes)
+				end
 			end
 		end)
 		return
