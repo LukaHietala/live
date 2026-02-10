@@ -4,6 +4,8 @@ local utils = require("cesp.utils")
 local config = require("cesp.config").config
 
 local M = {}
+-- Client's state
+M.state = {}
 
 -- Sends event to the server
 function M.send_event(event_table)
@@ -28,6 +30,44 @@ function M.handle_event(json_str)
 	-- Get event details
 	local payload = utils.decode_json(json_str)
 	if not payload or not payload.event then
+		return
+	end
+
+	-- After handshake server sends client metadata (mirrored on server)
+	if payload.event == "handshake_response" then
+		if
+			payload.id == nil
+			or payload.name == nil
+			or payload.is_host == nil
+		then
+			return
+		end
+
+		M.state = {
+			id = payload.id,
+			name = payload.name,
+			is_host = payload.is_host,
+		}
+
+		print("Joined as " .. M.state.name)
+		return
+	end
+
+	-- If new host is assigned update state if necessary
+	if payload.event == "new_host" then
+		if payload.host_id == nil then
+			return
+		end
+
+		-- If new host is self update state
+		-- TODO: left message hides these messages, FIX
+		if payload.host_id == M.state.id then
+			print("You're the new host!")
+			M.state.is_host = true
+		else
+			print(payload.name .. " is the new host!")
+		end
+
 		return
 	end
 
