@@ -1,7 +1,6 @@
 local browser = require("cesp.browser")
 local buffer = require("cesp.buffer")
 local utils = require("cesp.utils")
-local config = require("cesp.config").config
 
 local M = {}
 -- Client's state

@@ -216,7 +216,10 @@ end
 
 -- Returns buffer's SHA256 content hash
 function M.get_buf_sha256(buf)
-	if not vim.api.nvim_buf_is_valid(buf) and not nvim_buf_is_loaded(buf) then
+	if
+		not vim.api.nvim_buf_is_valid(buf)
+		and not vim.api.nvim_buf_is_loaded(buf)
+	then
 		return nil
 	end
 
