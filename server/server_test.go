@@ -44,7 +44,7 @@ func TestValidHandshake(t *testing.T) {
 
 	reply, _ := bufio.NewReader(conn).ReadString('\n')
 	if !strings.Contains(reply, "handshake_response") {
-		t.Fatalf("Expected user_joined event, got: %s", reply)
+		t.Fatalf("Expected handshake_response, got: %s", reply)
 	}
 }
 
@@ -92,6 +92,7 @@ func TestMessageLimits(t *testing.T) {
 	conn, _ := net.Dial("tcp", addr)
 	defer conn.Close()
 
+	// Create a message slightly larger than the limit
 	bigMsg := make([]byte, MaxBufferSize+1024)
 	for i := range bigMsg {
 		bigMsg[i] = 'a'
@@ -109,27 +110,35 @@ func TestMessageLimits(t *testing.T) {
 	}
 }
 
-func TestHostMigration(t *testing.T) {
+func TestHostClaiming(t *testing.T) {
 	server, addr := startTestServer()
 
-	// First client (should be host)
+	// First client claims host
 	c1, _ := net.Dial("tcp", addr)
-	fmt.Fprintln(c1, `{"event": "handshake", "name": "host"}`)
+	fmt.Fprintln(c1, `{"event": "handshake", "name": "host", "host": true}`)
+	bufio.NewReader(c1).ReadString('\n') // Wait for response
 
-	// Second client
-	c2, _ := net.Dial("tcp", addr)
-	fmt.Fprintln(c2, `{"event": "handshake", "name": "koira"}`)
-
-	time.Sleep(50 * time.Millisecond)
-
-	// Disconnect first host
-	c1.Close()
-
-	time.Sleep(50 * time.Millisecond)
-
+	// Verify c1 is host
 	done := make(chan bool)
 	server.actions <- func() {
-		if server.Host != nil && server.Host.Name == "koira" && server.Host.IsHost {
+		if server.Host != nil && server.Host.Name == "host" && server.Host.IsHost {
+			done <- true
+		} else {
+			done <- false
+		}
+	}
+	if !<-done {
+		t.Fatal("First client failed to claim host")
+	}
+
+	// Second client tries to claim host
+	c2, _ := net.Dial("tcp", addr)
+	fmt.Fprintln(c2, `{"event": "handshake", "name": "roisto", "host": true}`)
+	bufio.NewReader(c2).ReadString('\n')
+
+	// Verify c1 is still host (c2 failed)
+	server.actions <- func() {
+		if server.Host != nil && server.Host.Name == "host" {
 			done <- true
 		} else {
 			done <- false
@@ -137,34 +146,53 @@ func TestHostMigration(t *testing.T) {
 	}
 
 	if !<-done {
-		t.Error("Host crown was not passed to the second client correctly")
+		t.Error("Second client stole host status, but shouldn't have")
 	}
 }
 
 func TestRequestTimeoutCleanup(t *testing.T) {
 	server, addr := startTestServer()
 
+	// Join as host
+	h, _ := net.Dial("tcp", addr)
+	fmt.Fprintln(h, `{"event": "handshake", "name": "host", "host": true}`)
+	bufio.NewReader(h).ReadString('\n') // clear buffer
+
+	// Client that sends request
 	conn, _ := net.Dial("tcp", addr)
 	fmt.Fprintln(conn, `{"event": "handshake", "name": "requester"}`)
-	time.Sleep(20 * time.Millisecond)
+	bufio.NewReader(conn).ReadString('\n') // clear buffer
 
+	// Send request
 	fmt.Fprintln(conn, `{"event": "request_files"}`)
 	time.Sleep(100 * time.Millisecond)
 
 	// Make sure that request was created
+	done := make(chan bool)
 	server.actions <- func() {
-		if len(server.PendingRequests) == 0 {
-			t.Errorf("Request was never registered")
+		if len(server.PendingRequests) > 0 {
+			done <- true
+		} else {
+			done <- false
 		}
 	}
+	if !<-done {
+		t.Errorf("Request was never registered (or rejected immediately)")
+	}
 
+	// Wait for timeout
 	time.Sleep(RequestTimeout + 50*time.Millisecond)
 
 	// Make sure that timeout clears the request
 	server.actions <- func() {
-		if len(server.PendingRequests) != 0 {
-			t.Errorf("Pending request was not cleaned up after timeout")
+		if len(server.PendingRequests) == 0 {
+			done <- true
+		} else {
+			done <- false
 		}
+	}
+	if !<-done {
+		t.Errorf("Pending request was not cleaned up after timeout")
 	}
 }
 
@@ -215,6 +243,7 @@ func BenchmarkServerMultiClient(b *testing.B) {
 		if err != nil {
 			b.Fatalf("failed to dial: %v", err)
 		}
+		// Standard clients (no host flag)
 		fmt.Fprintf(c, `{"event": "handshake", "name": "hauva-%d"}`+"\n", i)
 		conns[i] = c
 
@@ -234,7 +263,6 @@ func BenchmarkServerMultiClient(b *testing.B) {
 	})
 	b.StopTimer()
 
-	// Print messages per second
 	duration := b.Elapsed()
 	if duration > 0 {
 		opsPerSec := float64(b.N) / duration.Seconds()

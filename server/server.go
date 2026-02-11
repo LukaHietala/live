@@ -88,12 +88,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.actions <- func() {
 		client.ID = s.NextClientID
 		s.NextClientID++
-		if s.Host == nil {
-			client.IsHost = true
-			s.Host = client
-		} else {
-			client.IsHost = false
-		}
+		client.IsHost = false
 		s.Clients[client.ID] = client
 	}
 
@@ -168,8 +163,23 @@ func (s *Server) processMessage(client *Client, msg map[string]any) {
 
 func (s *Server) handleHandshake(client *Client, msg map[string]any) {
 	newName, _ := msg["name"].(string)
+
+	wantsHost, _ := msg["host"].(bool)
+
 	if newName != "" && client.Name == "" {
 		client.Name = newName
+
+		// If they asked to be host, and no host exists, make them host.
+		if wantsHost {
+			if s.Host == nil {
+				client.IsHost = true
+				s.Host = client
+				log.Printf("Client %s (ID: %d) registered as HOST", client.Name, client.ID)
+			} else {
+				log.Printf("Client %s requested host, but host already exists (ID: %d)", client.Name, s.Host.ID)
+			}
+		}
+
 		s.broadcast(client.ID, map[string]any{
 			"event":   "user_joined",
 			"id":      client.ID,
@@ -220,7 +230,6 @@ func (s *Server) createNewRequest(client *Client, msg map[string]any) {
 	if s.Host != nil {
 		s.sendJSON(s.Host, msg)
 	} else {
-		// Fallback if no one is in the room to be a host
 		s.sendJSON(client, map[string]any{"event": "error", "message": "No host available"})
 		pending.Timer.Stop()
 		delete(s.PendingRequests, reqID)
@@ -243,22 +252,12 @@ func (s *Server) removeClient(client *Client) {
 	}
 
 	if client.IsHost {
-		s.Host = nil // Clear current host
-		if len(s.Clients) > 0 {
-			// Pick the next available client
-			for _, c := range s.Clients {
-				c.IsHost = true
-				s.Host = c
+		s.Host = nil
+		log.Printf("Host %s left. Waiting for new host...", client.Name)
 
-				s.broadcast(-1, map[string]any{
-					"event":   "new_host",
-					"host_id": c.ID,
-					"name":    c.Name,
-				})
-				log.Printf("New host assigned: %s (ID: %d)", c.Name, c.ID)
-				break
-			}
-		}
+		s.broadcast(-1, map[string]any{
+			"event": "host_left",
+		})
 	}
 
 	s.broadcast(-1, map[string]any{"event": "user_left", "id": client.ID, "name": client.Name})
@@ -271,7 +270,7 @@ func (s *Server) handleTimeout(reqID int) {
 	}
 	client, ok := s.Clients[req.ClientID]
 	if ok {
-		s.sendJSON(client, map[string]any{"event": "error", "message": "Timeout! Incompetent host"})
+		s.sendJSON(client, map[string]any{"event": "error", "message": "Timeout! Host failed to respond"})
 	}
 	delete(s.PendingRequests, reqID)
 }

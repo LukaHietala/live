@@ -11,8 +11,27 @@ function M.setup(opts)
 
 	vim.api.nvim_create_user_command("CespJoin", function(args)
 		local ip = args.args ~= "" and args.args or "127.0.0.1"
-		network.start_client(ip)
+		vim.ui.select({ "Host", "Client" }, {
+			prompt = "Join session as:",
+		}, function(choice)
+			if not choice then
+				print("Join cancelled")
+				return
+			end
+
+			local is_host = (choice == "Host")
+			network.start_client(ip, is_host)
+		end)
 	end, { nargs = "?" })
+
+	vim.api.nvim_create_user_command("CespLeave", function()
+		if network.handle == nil then
+			print("Not connected")
+			return
+		end
+
+		network.stop()
+	end, {})
 
 	vim.api.nvim_create_user_command("CespExplore", function()
 		if events.state.is_host then

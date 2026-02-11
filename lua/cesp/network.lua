@@ -45,7 +45,7 @@ local function on_read()
 	end
 end
 
-function M.start_client(ip)
+function M.start_client(ip, is_host)
 	if M.handle then
 		if not M.handle:is_closing() then
 			print("Already connected, try again") -- :katti:
@@ -69,6 +69,7 @@ function M.start_client(ip)
 		events.send_event({
 			event = "handshake",
 			name = config.name,
+			host = is_host,
 		})
 
 		-- TODO: add handshake response, so we know "this" client's id and other details
@@ -101,10 +102,21 @@ end
 function M.stop()
 	if M.handle then
 		events.send_event({ event = "cursor_leave" })
-		M.handle:close()
+
+		if not M.handle:is_closing() then
+			M.handle:close()
+		end
 		M.handle = nil
 	end
-	cursor.clear_all_remote_cursors()
+
+	vim.schedule(function()
+		cursor.clear_all_remote_cursors()
+		-- Reset client state
+		events.state.is_host = false
+		events.state.client_id = nil
+	end)
+
+	print("Closed connection")
 end
 
 return M

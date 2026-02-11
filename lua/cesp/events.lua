@@ -209,6 +209,15 @@ function M.handle_event(json_str)
 		return
 	end
 
+	if payload.event == "error" then
+		if not payload.message then
+			return
+		end
+
+		print(payload.message)
+		return
+	end
+
 	print("Not implemented :( " .. payload.event)
 end
 
