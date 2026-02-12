@@ -146,7 +146,7 @@ func (s *Server) processMessage(client *Client, msg map[string]any) {
 	// Route events by type
 	switch event {
 	// To broadcast
-	case "cursor_move", "update_content", "cursor_leave":
+	case "cursor_move", "update_content", "cursor_leave", "remote_write":
 		msg["from_id"] = client.ID
 		msg["name"] = client.Name
 		s.broadcast(client.ID, msg)

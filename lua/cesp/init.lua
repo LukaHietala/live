@@ -21,7 +21,22 @@ function M.setup(opts)
 			end
 
 			local is_host = (choice == "Host")
-			network.start_client(ip, is_host)
+			if is_host then
+				vim.ui.select({ "Yes", "No" }, {
+					prompt = "Allow clients to save files on your machine (:w)? (dangerous)",
+				}, function(allow_write)
+					if not allow_write then
+						print("Join cancelled")
+						return
+					end
+
+					events.allow_remote_write = (allow_write == "Yes")
+
+					network.start_client(ip, is_host)
+				end)
+			else
+				network.start_client(ip, is_host)
+			end
 		end)
 	end, { nargs = "?" })
 

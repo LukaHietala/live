@@ -101,7 +101,7 @@ function M.open_remote_file(path, content, on_complete)
 			buf = vim.api.nvim_create_buf(true, true)
 			pcall(vim.api.nvim_buf_set_name, buf, target_rel_path)
 
-			vim.bo[buf].buftype = "nofile"
+			vim.bo[buf].buftype = "acwrite"
 			vim.bo[buf].swapfile = false
 			vim.bo[buf].bufhidden = "hide"
 
@@ -109,6 +109,16 @@ function M.open_remote_file(path, content, on_complete)
 			if ft then
 				vim.bo[buf].filetype = ft
 			end
+
+			-- This needs to be a acwrite buf to listen for write events
+			-- but it should never complain about not written files
+			-- TODO: Get rid of this nasty piece of code
+			vim.api.nvim_create_autocmd({"TextChanged", "TextChangedI"}, {
+				buffer = buf,
+				callback = function()
+					vim.bo[buf].modified = false
+				end,
+			})
 
 			-- TODO: Try to forcibly attach lsp to the buffer
 		end

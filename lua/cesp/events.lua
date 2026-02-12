@@ -5,6 +5,8 @@ local utils = require("cesp.utils")
 local M = {}
 -- Client's state
 M.state = {}
+-- Are writes from client allowed (scary)
+M.allow_remote_write = false
 
 -- Sends event to the server
 function M.send_event(event_table)
@@ -145,6 +147,18 @@ function M.handle_event(json_str)
 					changes = c,
 				})
 			end)
+
+			vim.api.nvim_create_autocmd("BufWriteCmd", {
+				buffer = buf,
+				callback = function()
+					M.send_event({
+						event = "remote_write",
+						path = path,
+						-- Host applies it own content, that miiight be synced currectly
+						-- Clients can't be trusted >:(
+					})
+				end,
+			})
 		end)
 		return
 	end
@@ -224,6 +238,60 @@ function M.handle_event(json_str)
 		end
 
 		print(payload.name .. " left :(")
+		return
+	end
+
+	-- User sent request to write file
+	if payload.event == "remote_write" then
+		if not M.state.is_host then
+			return
+		end
+
+		local path = payload.path
+		local requestor_name = payload.name or "???"
+
+		if not M.allow_remote_write then
+			return
+		end
+
+		-- Get content from host's own buffer
+		-- No trusting clients here
+		local bufnr = utils.find_buffer_by_rel_path(path)
+		local buffer_util = require("cesp.buffer")
+
+		-- This feature is really dangereous and clunky, so it might get removed
+		-- File might get messed up if host buffer gets out of sync or something else
+		-- weird happens
+
+		-- If buffer is open/valid/loaded :kisumirri:
+		if
+			bufnr
+			and vim.api.nvim_buf_is_valid(bufnr)
+			and vim.api.nvim_buf_is_loaded(bufnr)
+		then
+			vim.api.nvim_buf_call(bufnr, function()
+				-- Maybe noautocmd later?
+				vim.cmd("write")
+			end)
+
+			-- Clear pending as they are now committed via the write
+			buffer_util.pending[path] = nil
+		else
+			-- Buffer is not open
+			local content =
+				utils.get_file_content(path, buffer_util.pending[path])
+
+			if content then
+				-- Standard write
+				utils.write_file(path, content)
+				buffer_util.pending[path] = nil
+
+				print(requestor_name .. " wrote to " .. path)
+			else
+				print("Failed to save " .. path .. " (no content?)")
+			end
+		end
+
 		return
 	end
 
