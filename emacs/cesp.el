@@ -42,6 +42,10 @@ you are editing with them"
 
 ;;; Internal variables
 
+(defvar cesp-is-host
+  nil
+  "Am I the host?")
+
 (defvar cesp-server-process
   nil
   "The internal server process object.
@@ -62,7 +66,7 @@ Format is:
 
 ;;;; Connection management
 
-(defun cesp-connect-server(host port)
+(defun cesp-connect-server(host port owner)
   "Connects to a Cesp server.
 This connects your Emacs session to a Cesp server
 at HOST PORT, for example localhost 8080
@@ -70,7 +74,10 @@ which is the default for a Cesp server.
 
 It will then perform the handshake, giving your
 name as per the variable"
-  (interactive "sServer hostname: \nsServer port: ")
+  (interactive
+   (list (read-string "Server hostname: ")
+		 (read-string "Server port: ")
+		 (y-or-n-p "Become host if possible: ")))
   (if (or (not cesp-server-process) (not (process-live-p cesp-server-process)))
 	  (progn
 		(setq cesp-server-process (make-network-process
@@ -82,7 +89,8 @@ name as per the variable"
 								 :filter 'cesp--filter
 								 :sentinel 'cesp--sentinel))
 		;; Perform handshake
-		(cesp--send '((event . "handshake") (name . "Jaakko")) ))
+		(cesp--send `((event . "handshake") (name . "Jaakko") (host . ,(or owner
+																		  :false)))))
 	(error "You are already connected to a server!")))
 
 (defun cesp-disconnect()
@@ -192,6 +200,10 @@ as appropriate."
 		 (cdr (assoc 'position json))
 		 (cdr (assoc 'path json))
 		 (cdr (assoc 'name json))))
+	   ((string= "handshake_response" event)
+		(or (and (eq (cdr (assoc 'is_host json)) :true)
+				 (setq cesp-is-host t))
+			(setq cesp-is-host nil)))
 	   ))))
 
 (defun cesp--sentinel(proc msg)
