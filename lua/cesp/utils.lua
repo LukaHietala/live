@@ -196,8 +196,9 @@ function M.get_file_content(path, pending_changes)
 	-- Set base lines (disk)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-	-- Merge pending changes
-	for _, change in ipairs(pending_changes) do
+	-- Merge pending changes (reverse to keep indexes right)
+	for i = #pending_changes, 1, -1 do
+		local change = pending_changes[i]
 		vim.api.nvim_buf_set_lines(
 			temp_buf,
 			change.first,
