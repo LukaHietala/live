@@ -119,7 +119,9 @@ This function does not handle the response"
 
 This function may be used directly, or by cesp-browse-mode"
   (interactive "sFile path: ")
-  (cesp--send `((event . "request_file") (path . ,file))))
+  (if (and cesp-server-process (process-live-p cesp-server-process))
+	  (cesp--send `((event . "request_file") (path . ,file)))
+	(error "You are not connected to a server!")))
 
 ;;; Internal functions
 
@@ -201,7 +203,7 @@ as appropriate."
 		 (cdr (assoc 'path json))
 		 (cdr (assoc 'name json))))
 	   ((string= "handshake_response" event)
-		(or (and (eq (cdr (assoc 'is_host json)) :true)
+		(or (and (cdr (assoc 'is_host json))
 				 (setq cesp-is-host t))
 			(setq cesp-is-host nil)))
 	   ))))
