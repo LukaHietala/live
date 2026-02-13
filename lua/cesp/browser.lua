@@ -113,7 +113,7 @@ function M.open_remote_file(path, content, on_complete)
 			-- This needs to be a acwrite buf to listen for write events
 			-- but it should never complain about not written files
 			-- TODO: Get rid of this nasty piece of code
-			vim.api.nvim_create_autocmd({"TextChanged", "TextChangedI"}, {
+			vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 				buffer = buf,
 				callback = function()
 					vim.bo[buf].modified = false
